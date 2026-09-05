@@ -2,6 +2,10 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.1.2
+
+- Documentation: docs/OPTIONS.md with a diagram per option, docs/BENCHMARKS.md with every measured number and its method, docs/GLOSSARY.md. Keyword-only against fused recall measured on the same corpus.
+
 ## 0.1.1
 
 - Semantic recall on by default: `init.mjs` installs the runtime and builds vectors, the hook starts the embedder itself when it is down. `--no-semantic` to opt out.

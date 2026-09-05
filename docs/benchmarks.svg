@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <text x="18" y="24" font-size="12" fill="#6b7280" letter-spacing="1.5">SAME 274 MEMORIES, SAME 41 QUESTIONS, SAME MACHINE</text>
+
+  <text x="120" y="60" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">recall@5</text>
+  <line x1="40" y1="230" x2="200" y2="230" stroke="#9ca3af" stroke-width="1"/>
+  <rect x="58" y="94" width="50" height="136" fill="#9ca3af" fill-opacity="0.5"/>
+  <text x="83" y="86" text-anchor="middle" font-size="12" fill="#6b7280">92.7%</text>
+  <text x="83" y="248" text-anchor="middle" font-size="10.5" fill="#6b7280">keyword</text>
+  <rect x="132" y="86" width="50" height="144" fill="#2563eb" fill-opacity="0.75"/>
+  <text x="157" y="78" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">97.6%</text>
+  <text x="157" y="248" text-anchor="middle" font-size="10.5" fill="#2563eb">+ meaning</text>
+  <text x="120" y="270" text-anchor="middle" font-size="10" fill="#9ca3af">38 of 41 against 40 of 41</text>
+
+  <text x="400" y="60" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">median latency per prompt</text>
+  <line x1="300" y1="230" x2="500" y2="230" stroke="#9ca3af" stroke-width="1"/>
+  <rect x="330" y="170" width="50" height="60" fill="#9ca3af" fill-opacity="0.5"/>
+  <text x="355" y="162" text-anchor="middle" font-size="12" fill="#6b7280">91ms</text>
+  <text x="355" y="248" text-anchor="middle" font-size="10.5" fill="#6b7280">keyword</text>
+  <rect x="420" y="107" width="50" height="123" fill="#2563eb" fill-opacity="0.75"/>
+  <text x="445" y="99" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">187ms</text>
+  <text x="445" y="248" text-anchor="middle" font-size="10.5" fill="#2563eb">+ meaning</text>
+  <text x="400" y="270" text-anchor="middle" font-size="10" fill="#9ca3af">p95: 97ms against 221ms</text>
+
+  <text x="690" y="60" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">prompts that returned nothing</text>
+  <line x1="590" y1="230" x2="790" y2="230" stroke="#9ca3af" stroke-width="1"/>
+  <rect x="620" y="150" width="50" height="80" fill="#9ca3af" fill-opacity="0.5"/>
+  <text x="645" y="142" text-anchor="middle" font-size="12" fill="#6b7280">2 of 20</text>
+  <text x="645" y="248" text-anchor="middle" font-size="10.5" fill="#6b7280">keyword</text>
+  <rect x="710" y="229" width="50" height="1" fill="#2563eb"/>
+  <text x="735" y="221" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">0</text>
+  <text x="735" y="248" text-anchor="middle" font-size="10.5" fill="#2563eb">+ meaning</text>
+  <text x="690" y="270" text-anchor="middle" font-size="10" fill="#9ca3af">an empty recall is the failure that hurts</text>
+
+  <text x="450" y="292" text-anchor="middle" font-size="10" fill="#9ca3af">Meaning costs about 95ms and a 280MB runtime, once. It buys two more answers in 41 and no empty prompts.</text>
+</svg>

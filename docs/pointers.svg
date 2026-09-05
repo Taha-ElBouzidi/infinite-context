@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/></marker>
+  </defs>
+
+  <text x="18" y="26" font-size="12" fill="#2563eb" letter-spacing="1.5">WHAT THIS DOES: POINTERS</text>
+  <rect x="18" y="40" width="420" height="236" rx="10" fill="#2563eb" fill-opacity="0.04" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="40" y="66" font-size="11" fill="#6b7280">injected into the prompt, about 1.7k tokens, whatever the size of the memory:</text>
+  <rect x="40" y="78" width="376" height="20" rx="4" fill="none" stroke="#9ca3af" stroke-width="1"/><text x="48" y="92" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">slug   one-line description   path</text>
+  <rect x="40" y="102" width="376" height="20" rx="4" fill="none" stroke="#9ca3af" stroke-width="1"/><text x="48" y="116" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">slug   one-line description   path</text>
+  <rect x="40" y="126" width="376" height="20" rx="4" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="1"/><text x="48" y="140" font-size="10.5" fill="#2563eb" font-family="ui-monospace, monospace">slug   one-line description   path   &lt;- the agent opens this one</text>
+  <rect x="40" y="150" width="376" height="20" rx="4" fill="none" stroke="#9ca3af" stroke-width="1"/><text x="48" y="164" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">slug   one-line description   path</text>
+  <rect x="40" y="174" width="376" height="20" rx="4" fill="none" stroke="#9ca3af" stroke-width="1"/><text x="48" y="188" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">slug   one-line description   path</text>
+  <line x1="228" y1="196" x2="228" y2="222" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+  <rect x="120" y="226" width="216" height="34" rx="7" fill="none" stroke="#6b7280" stroke-width="1.4"/>
+  <text x="228" y="247" text-anchor="middle" font-size="11" fill="#6b7280">one file read, the fact, fresh from disk</text>
+
+  <text x="470" y="26" font-size="12" fill="#9ca3af" letter-spacing="1.5">WHAT THIS DOES NOT DO: BODIES</text>
+  <rect x="470" y="40" width="412" height="236" rx="10" fill="none" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="492" y="66" font-size="11" fill="#9ca3af">five whole memories in every prompt, growing with the memory:</text>
+  <rect x="492" y="78" width="368" height="34" rx="4" fill="none" stroke="#d1d5db" stroke-width="1"/><text x="500" y="99" font-size="10.5" fill="#9ca3af">full body, 400 tokens, mostly irrelevant</text>
+  <rect x="492" y="116" width="368" height="34" rx="4" fill="none" stroke="#d1d5db" stroke-width="1"/><text x="500" y="137" font-size="10.5" fill="#9ca3af">full body, 400 tokens, mostly irrelevant</text>
+  <rect x="492" y="154" width="368" height="34" rx="4" fill="none" stroke="#d1d5db" stroke-width="1"/><text x="500" y="175" font-size="10.5" fill="#9ca3af">full body, 400 tokens, the one that mattered</text>
+  <rect x="492" y="192" width="368" height="34" rx="4" fill="none" stroke="#d1d5db" stroke-width="1"/><text x="500" y="213" font-size="10.5" fill="#9ca3af">full body, 400 tokens, mostly irrelevant</text>
+  <line x1="492" y1="78" x2="860" y2="226" stroke="#9ca3af" stroke-width="1.2"/>
+  <line x1="860" y1="78" x2="492" y2="226" stroke="#9ca3af" stroke-width="1.2"/>
+  <text x="676" y="256" text-anchor="middle" font-size="11" fill="#9ca3af">five times the tokens to save one file read, and it gets worse as the memory grows</text>
+</svg>

@@ -1,6 +1,6 @@
 {
   "name": "infinite-context",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Infinite context for your AI model. Unlimited memory for coding agents, without putting it in the context window. Local, plain markdown, pointer-based recall.",
   "type": "module",
   "license": "AGPL-3.0-only",

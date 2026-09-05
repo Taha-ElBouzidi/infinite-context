@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" width="900" height="280" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Roboto, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#2563eb"/></marker>
+  </defs>
+
+  <rect x="16" y="112" width="130" height="50" rx="8" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="81" y="133" text-anchor="middle" font-size="12" fill="#6b7280">the prompt</text>
+  <text x="81" y="150" text-anchor="middle" font-size="10" fill="#9ca3af">"did they lose the file"</text>
+
+  <line x1="148" y1="130" x2="200" y2="70" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+  <line x1="148" y1="146" x2="200" y2="206" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <rect x="204" y="36" width="250" height="70" rx="8" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="329" y="56" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">keyword channel</text>
+  <text x="329" y="74" text-anchor="middle" font-size="10.5" fill="#6b7280">exact and stemmed words, scored by rarity</text>
+  <text x="329" y="90" text-anchor="middle" font-size="10.5" fill="#6b7280">against every description. Always on.</text>
+
+  <rect x="204" y="172" width="250" height="70" rx="8" fill="#2563eb" fill-opacity="0.06" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="329" y="192" text-anchor="middle" font-size="12" fill="#2563eb" font-weight="600">meaning channel</text>
+  <text x="329" y="210" text-anchor="middle" font-size="10.5" fill="#6b7280">the prompt as a vector, compared to</text>
+  <text x="329" y="226" text-anchor="middle" font-size="10.5" fill="#6b7280">each memory's vector. Needs the embedder.</text>
+
+  <line x1="456" y1="70" x2="520" y2="126" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+  <line x1="456" y1="206" x2="520" y2="150" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <rect x="524" y="108" width="150" height="60" rx="8" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="599" y="130" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">fusion</text>
+  <text x="599" y="147" text-anchor="middle" font-size="10.5" fill="#6b7280">two rankings merged,</text>
+  <text x="599" y="161" text-anchor="middle" font-size="10.5" fill="#6b7280">best of either surfaces</text>
+
+  <line x1="676" y1="138" x2="720" y2="138" stroke="#2563eb" stroke-width="1.4" marker-end="url(#a)"/>
+
+  <rect x="724" y="90" width="160" height="96" rx="8" fill="none" stroke="#6b7280" stroke-width="1.5"/>
+  <text x="804" y="110" text-anchor="middle" font-size="12" fill="#6b7280" font-weight="600">5 pointers, tagged</text>
+  <text x="738" y="130" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">[both]     found by both</text>
+  <text x="738" y="148" font-size="10.5" fill="#2563eb" font-family="ui-monospace, monospace">[meaning]  keyword missed it</text>
+  <text x="738" y="166" font-size="10.5" fill="#6b7280" font-family="ui-monospace, monospace">[keyword]  meaning missed it</text>
+
+  <text x="450" y="268" text-anchor="middle" font-size="11" fill="#6b7280">A hit tagged [meaning] is a memory the keyword channel could not have found. When that tag stops appearing, the embedder is down.</text>
+</svg>

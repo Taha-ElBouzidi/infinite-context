@@ -57,6 +57,7 @@ Measured on the authors' own 41-query set, on a brain of about 270 memories:
 | cost per prompt | about **200ms** on the host, about 600ms over the network |
 | context added | about **1.7k tokens**, whatever the size of the memory |
 | returned nothing | **0** of 41 |
+| keyword-only, for comparison | 92.7%, twice as fast, and 2 of 20 prompts came back empty |
 
 Your numbers will differ. Measure them: `node tools/eval-recall.mjs` and `node tools/bench-recall.mjs`.
 
@@ -96,6 +97,16 @@ node tools/eval-recall.mjs     # accuracy against a fixed query set
 node tools/bench-recall.mjs    # latency of the real hook, end to end
 node tools/analytics.mjs       # results sheet from every logged call, with alerts
 ```
+
+## Read more
+
+| | |
+|---|---|
+| [docs/OPTIONS.md](docs/OPTIONS.md) | every option, what it is, a diagram, what it buys and costs |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | every number, how it was measured, how to reproduce it |
+| [docs/GLOSSARY.md](docs/GLOSSARY.md) | every term, defined once |
+| [AGENTS.md](AGENTS.md) | for the agent installing it |
+| [.project/DECISIONS.md](.project/DECISIONS.md) | why it is built this way |
 
 ## Multi-machine mode
 

@@ -24,6 +24,8 @@ Full entries for features and breaking changes. Brief one-liners for small fixes
 
 ## Log
 
+- [2026-09-05] docs(options): OPTIONS, BENCHMARKS, GLOSSARY and four diagrams; keyword-only vs fused measured on 274 memories, 41 questions, 92.7% vs 97.6%, 91ms vs 187ms median, docs/*
+
 ### [2026-09-05] First release, 0.1.0, local-only mode
 
 **Type:** feat
