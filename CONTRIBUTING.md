@@ -28,5 +28,5 @@ gets fixed. A report without them gets a question back.
 ## Workflow
 
 Branching, commit convention and the release gate are in `.project/WORKFLOW.md`. Read it before
-opening a pull request; the one rule that matters most is that `main` must stay installable from a
-fresh clone with no environment variables set.
+opening a pull request; pull requests target `develop`, and the one rule that matters most is that `main` must stay
+installable from a fresh clone with no environment variables set.

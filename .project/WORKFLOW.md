@@ -5,26 +5,40 @@
 ## Branch Structure
 
 ```
-main                 <- default branch, always installable, tagged releases
+main                 <- STABLE. What users clone. Every commit passes the release gate. Tagged releases.
+  ^  merged from develop when a release is cut
+develop              <- INTEGRATION. Where pull requests land. Always passes verify.mjs.
   ^
-feature/*  fix/*     <- short-lived work branches, one task each
-docs/*               <- documentation only, no code
+feature/*  fix/*     <- short-lived work branches, one task each, from develop
+hotfix/*             <- from main, merged to main AND develop
+docs/*               <- documentation only
 ```
 
-This is a small open-source engine, not a multi-tier product. One protected branch is enough.
+This is the model most open-source projects that ship installable software use: GitHub Flow on
+`main` (short-lived branches, `main` always shippable, releases are tags) with one integration
+branch, `develop`, so a release can batch several merges and be verified as a whole before users
+see it. Full Git Flow (`release/*` branches) is deliberately not used; it suits scheduled releases
+by large teams and adds ceremony this project does not need.
+
+References read before choosing, September 2026: the comparisons at inventivehq.com
+(GitFlow vs GitHub Flow vs Trunk-Based), deployhq.com (GitHub Flow, GitFlow, GitLab Flow, Release
+Flow) and harness.io (GitHub Flow vs Git Flow). Their shared conclusion: GitHub Flow for open
+source and small teams, GitFlow for formal release cycles, and picking one and sticking to it
+matters more than which.
 
 ## Branch Rules
 
 | Branch | Purpose | Protection |
 |---|---|---|
-| `main` | Always installable. Every commit passes `tools/verify.mjs` on a fresh clone. | PR required, owner review, CLA signed, no force-push |
-| `feature/*`, `fix/*` | One task per branch. Short-lived. | None: merge via PR to `main` |
-| `docs/*` | Documentation only. | None: merge via PR to `main` |
+| `main` | Stable. Users clone this. A release is a tag here. | PR required, owner review, no force-push |
+| `develop` | Integration. Every PR targets this. | PR required, owner review, CLA signed, no force-push |
+| `feature/*`, `fix/*`, `docs/*` | One task per branch, from `develop`. Short-lived. | None: merge via PR to `develop` |
+| `hotfix/*` | Emergency, from `main`. | Merge to `main`, then to `develop` so it is not lost |
 
 **Rules:**
-- Nobody pushes directly to `main`: PRs only, including the owner
+- Nobody pushes directly to `main` or `develop`: PRs only, including the owner
+- A release is `develop` merged into `main` and tagged `vX.Y.Z`, never the other way
 - Work branches are deleted after merge
-- A release is a tag on `main`: `v0.1.0`, `v0.2.0`, following semantic versioning
 
 ## The gate
 
@@ -59,10 +73,10 @@ test(bench): report median and p95, never the mean
 
 ## PR Process
 
-1. Create a `feature/*` or `fix/*` branch from `main`
+1. Create a `feature/*` or `fix/*` branch from `develop`
 2. Implement, run `node tools/verify.mjs`, commit with conventional messages
 3. Update `.project/CHANGELOG.md`, and `.project/STRUCTURE.md` if files moved
-4. Open a PR to `main` using the template
+4. Open a PR to `develop` using the template
 5. Sign the CLA when the bot asks, once, on your first PR
 6. Owner reviews and merges. Branch is deleted.
 

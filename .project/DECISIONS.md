@@ -139,3 +139,23 @@ cloning the export on a machine that had a brain.
 **Rejected:** Marker before own location, the previous order.
 
 **Decider:** Repository owner
+
+---
+
+## [2026-09-05] Two long-lived branches, main and develop, releases as tags
+
+**Status:** Active
+
+**Decision:** `main` is stable and is what users clone; `develop` is where pull requests land;
+a release is `develop` merged into `main` and tagged.
+
+**Why:** Users who `git clone` get the default branch. That branch must never carry a half-merged
+change. One integration branch lets several merges be verified together before they reach users,
+which is what "staging" means for a library. Research in September 2026 (inventivehq, deployhq,
+harness comparisons) agrees: GitHub Flow for open source, an integration branch when releases
+are batched, full GitFlow only for scheduled releases by large teams.
+
+**Rejected:** `main` alone, which puts every merge in front of users immediately. Full GitFlow
+with `release/*` and `hotfix/*` as permanent fixtures, which adds ceremony without a team to need it.
+
+**Decider:** Repository owner

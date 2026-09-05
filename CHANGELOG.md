@@ -2,12 +2,17 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.1.1
+
+- Semantic recall on by default: `init.mjs` installs the runtime and builds vectors, the hook starts the embedder itself when it is down. `--no-semantic` to opt out.
+- Branch model: `main` stable, `develop` for pull requests, releases as tags.
+
 ## 0.1.0
 
 First release. Local-only mode.
 
 - Pointer-based recall: five slugs and descriptions per prompt, the agent opens what it needs.
-- Two retrieval channels, keyword and semantic, fused. Semantic is optional and local.
+- Two retrieval channels, keyword and semantic, fused. Both on by default, both local. The hook starts the embedder itself.
 - Behaviour rules are memories with a `rule:` line, injected every turn. Five generic seeds.
 - `tools/init.mjs` sets up an empty brain in one command and verifies itself.
 - `tools/install-hook.mjs` wires Claude Code, backs up settings first, never clobbers.

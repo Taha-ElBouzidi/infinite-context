@@ -26,6 +26,7 @@ import { dirname, resolve, join } from 'node:path';
 
 const BRAIN = process.env.HAVOK_BRAIN || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FORCE = process.argv.includes('--force');
+const NO_SEMANTIC = process.argv.includes('--no-semantic');
 const NL = String.fromCharCode(10);
 const say = (s) => process.stdout.write(s + NL);
 
@@ -162,6 +163,24 @@ for (const s of SEEDS) {
 }
 say('seeded ' + written + ' behaviour rule(s) as memories');
 
+// ---- semantic recall, ON by default ------------------------------------------------------------
+// Measured on a fresh clone, 2026-09-05: npm install 31s and 284MB, first build 16s including the
+// model download, and then a paraphrase with no word in common finds the right memory. Without
+// this the product is keyword-only, which is half of it. --no-semantic skips it, and the hook says
+// so on every turn rather than pretending.
+if (!NO_SEMANTIC) {
+  const pkg = join(BRAIN, 'node_modules', '@xenova', 'transformers');
+  if (!existsSync(pkg)) {
+    say('installing the embedding model runtime (about 280MB, around half a minute)...');
+    try {
+      execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-audit', '--no-fund', '--silent'], { cwd: BRAIN, stdio: 'inherit', timeout: 600000, windowsHide: true, shell: process.platform === 'win32' });
+    } catch (e) {
+      say('npm install failed: ' + String(e.message).split(NL)[0]);
+      say('Continuing keyword-only. Run npm install later and then node tools/build-index.mjs.');
+    }
+  }
+}
+
 // ---- build the index, which is what makes any of it findable -------------------------------
 try {
   const out = execFileSync(process.execPath, [join(BRAIN, 'tools', 'build-index.mjs')], {
@@ -184,6 +203,5 @@ say('');
 say('Next, and it is the step that actually switches memory on:');
 say('  node tools/install-hook.mjs');
 say('');
-say('Optional, for semantic recall so paraphrases match. Keyword recall works without it:');
-say('  npm install');
-say('  node tools/embed-server.mjs');
+const vectors = existsSync(join(BRAIN, 'index', 'embeddings.json'));
+say('semantic recall  : ' + (vectors ? 'ON, the hook starts the embedder itself when it is not running' : 'OFF, keyword only. Run: npm install && node tools/build-index.mjs'));

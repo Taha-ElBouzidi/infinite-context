@@ -288,7 +288,7 @@ emit(join(BRAIN, 'index', 'keywords.json'), keywordsText);
 // because vectors come from build-embeddings.mjs, which is documented nowhere.
 //
 // The fence stays: this script runs on every commit via the pre-commit hook and must be instant,
-// and embedding costs about 2.2 seconds and needs a 434MB model that only the server has. So the
+// and embedding costs about 2.2 seconds and needs the embedding model, which build-embeddings fetches on first run. So the
 // cost is paid ONLY when the memory set actually changed, and a machine that cannot pay it is
 // told loudly rather than left to discover the gap weeks later.
 // Must match build-embeddings.mjs exactly, or the two hashes can never agree and every run would

@@ -27,18 +27,16 @@ Requires Node 18 or newer. Nothing else.
 ```sh
 git clone https://github.com/Taha-ElBouzidi/infinite-context
 cd infinite-context
-node tools/init.mjs            # seeds five behaviour rules and builds the index
+node tools/init.mjs            # seeds five rules, installs the embedding runtime, builds the index
 node tools/install-hook.mjs    # wires Claude Code to it. Restart your session after.
 ```
 
-That is the whole install. Recall works on the next prompt.
+That is the whole install. Recall works on the next prompt, by keyword **and by meaning**: a
+question with no word in common with a memory still finds it. The first `init` downloads the
+embedding model, about 280MB, once. The hook starts the local embedder itself whenever it is
+not running, so there is nothing to keep alive by hand.
 
-Optional, so paraphrases match and not only exact words:
-
-```sh
-npm install
-node tools/embed-server.mjs
-```
+To skip semantic recall and stay keyword-only, `node tools/init.mjs --no-semantic`.
 
 ### Let your agent install it for you
 

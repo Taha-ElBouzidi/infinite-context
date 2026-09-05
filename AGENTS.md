@@ -27,7 +27,7 @@ If Node is missing, stop and tell the person. Do not install it without asking.
 node tools/init.mjs
 ```
 
-Verify: the output ends with `rules now active : 5`. If it says 0, stop; the index did not build.
+Verify: the output contains `rules now active : 5` and `semantic recall  : ON`. If rules say 0, stop; the index did not build. If semantic says OFF, `npm install` failed: tell the person, then continue, keyword recall still works.
 
 **2. Wire it into Claude Code.**
 
@@ -47,14 +47,10 @@ node tools/verify.mjs
 Verify: the last line is `BRAIN VERIFY PASSED`. If it fails, read which check failed and fix that.
 Do not report success on a failing verify.
 
-**4. Optional, semantic matching.** Only if the person wants paraphrases to match:
-
-```
-npm install
-node tools/embed-server.mjs
-```
-
-Verify: `curl http://127.0.0.1:8477/health` returns `{"ok":true,...}`.
+**4. Semantic recall is on by default.** Step 1 installed the model runtime and built the vectors.
+The hook starts the local embedder on its own when it is not running; the first prompt after a
+reboot may be keyword-only while it warms up, and the hook says so in your context when that
+happens. Nothing to do here unless step 1 reported `semantic recall  : OFF`.
 
 ## How to use it once installed
 

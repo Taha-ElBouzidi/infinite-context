@@ -428,10 +428,34 @@ function markRemoteDown(reason) {
   } catch { /* best effort, a mark that cannot be written just costs a retry next turn */ }
 }
 
+// Start the local embedder ourselves when it is not running, so semantic recall is on by default
+// on every machine that installed the runtime, with no scheduler and no one keeping a daemon
+// alive by hand. Added 2026-09-05 when a fresh clone of the published engine turned out to run
+// keyword-only forever, because "optional" meant nobody ever started it.
+//
+// Guarded three ways: only if the runtime is installed here, only one spawn per five minutes (a
+// cold model load is about 15s, and every prompt in that window must not fork another), and
+// detached with all stdio ignored so a hook that must finish in milliseconds never waits on it.
+// THIS turn still falls back to the server or to keyword; the next one gets the daemon.
+const EMBED_LOCK = resolve(homedir(), '.claude', 'havok-embed-starting');
+function ensureEmbedDaemon(brain) {
+  try {
+    if (!existsSync(join(brain, 'node_modules', '@xenova', 'transformers'))) return;
+    if (!existsSync(join(brain, 'tools', 'embed-server.mjs'))) return;
+    try {
+      const age = Date.now() - Number(readFileSync(EMBED_LOCK, 'utf8').trim());
+      if (age >= 0 && age < 5 * 60 * 1000) return;
+    } catch { /* no lock */ }
+    writeFileSync(EMBED_LOCK, String(Date.now()), 'utf8');
+    const child = spawn(process.execPath, [join(brain, 'tools', 'embed-server.mjs')], { detached: true, stdio: 'ignore', cwd: brain, windowsHide: true });
+    child.unref();
+  } catch { /* best effort, keyword recall still works */ }
+}
+
 function fetchVectorSync(text, brain) {
   // Local daemon first: it is on loopback and answers in milliseconds. Only fall out to the
   // network when this machine is not running one.
-  if (!existsSync(ALIVE)) return fetchVectorRemote(text, brain);
+  if (!existsSync(ALIVE)) { ensureEmbedDaemon(brain); return fetchVectorRemote(text, brain); }
   try {
     // Body over STDIN, never as an argv value.
     //
@@ -456,8 +480,10 @@ function fetchVectorSync(text, brain) {
     // A dead daemon can leave the marker behind: Stop-Process kills it before the exit handler
     // runs, and that is exactly how it died on 2026-08-21. In that state the marker says alive,
     // the local call fails, and without this the remote fallback would never be tried at all.
-    return Array.isArray(v) ? v : fetchVectorRemote(text, brain);
-  } catch { return fetchVectorRemote(text, brain); }
+    if (Array.isArray(v)) return v;
+    ensureEmbedDaemon(brain);
+    return fetchVectorRemote(text, brain);
+  } catch { ensureEmbedDaemon(brain); return fetchVectorRemote(text, brain); }
 }
 
 const ok = (ctx) => {

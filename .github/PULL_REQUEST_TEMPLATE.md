@@ -1,3 +1,5 @@
+<!-- Target branch: develop. main only receives releases. -->
+
 ## What changed
 
 [1-3 bullet points: the what, not the how]
