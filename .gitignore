@@ -1,0 +1,38 @@
+# Generated on every build-index. Rebuild with: node tools/build-index.mjs
+index/
+MANIFEST.md
+memory/MEMORY.md
+
+# Runtime state and logs
+.brain-analytics.json
+.brain-alerts.json
+.sync-trash/
+*.log
+.pull-from-server.state
+
+# Your own instance configuration and data. Keep them in your fork if you want them tracked;
+# they never belong in the upstream engine repository.
+brain.json
+eval-cases.json
+bench-prompts.json
+vault.json
+server-endpoint.json
+vault-recipients.json
+
+# Secrets, never
+*.token
+*token.json
+*.key
+*key*.pem
+havok-server-token
+
+# Dependencies
+node_modules/
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# the exporter writes this report into the export; it is for us, not for users
+REVIEW-BEFORE-PUBLISHING.md

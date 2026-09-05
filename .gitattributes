@@ -1,0 +1,9 @@
+# Normalize line endings repo-wide.
+#
+# CRLF checkouts silently broke frontmatter parsing (a trailing  defeats a $ anchor),
+# which dropped name and description from the index without any error. It also made every
+# generated file show as modified in git status. LF everywhere removes the whole class.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

@@ -1,0 +1,15 @@
+# .github/CODEOWNERS
+#
+# Auto-assigns the owner as reviewer on every pull request.
+# Requires "Require review from Code Owners" enabled in:
+# GitHub Settings > Branches > Branch protection rules
+#
+# Without that setting, this file is advisory only.
+
+# Catch-all: everything requires owner review
+* @Taha-ElBouzidi
+
+# Paths where a mistake reaches every user on their next prompt
+hooks/      @Taha-ElBouzidi
+tools/      @Taha-ElBouzidi
+.github/    @Taha-ElBouzidi

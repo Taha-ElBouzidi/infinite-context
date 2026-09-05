@@ -1,0 +1,69 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-session-start.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Loading Havok brain"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-content.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Scanning for em dash / emoji"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-secrets.mjs\"",
+            "timeout": 15,
+            "if": "Bash(git commit:*)",
+            "statusMessage": "Scanning staged diff for secrets"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-brain-commit.mjs\"",
+            "timeout": 130,
+            "if": "Bash(git commit:*)",
+            "statusMessage": "Verifying brain integrity"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-stop.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-memory-written.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Brain check: did this session learn anything"
+          }
+        ]
+      }
+    ]
+  }
+}

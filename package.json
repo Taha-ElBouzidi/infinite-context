@@ -1,0 +1,23 @@
+{
+  "name": "infinite-context",
+  "version": "0.1.0",
+  "description": "Infinite context for your AI model. Unlimited memory for coding agents, without putting it in the context window. Local, plain markdown, pointer-based recall.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "init": "node tools/init.mjs",
+    "install-hook": "node tools/install-hook.mjs",
+    "build-index": "node tools/build-index.mjs",
+    "verify": "node tools/verify.mjs",
+    "eval": "node tools/eval-recall.mjs",
+    "bench": "node tools/bench-recall.mjs",
+    "analytics": "node tools/analytics.mjs",
+    "embed": "node tools/embed-server.mjs"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2"
+  }
+}
