@@ -32,6 +32,7 @@
 |---|---|---|
 | P1 | Document multi-machine mode for outside use | Host, scoped tokens, per-machine encrypted secrets. It works; it is not written up. |
 | P1 | Hook adapters for other agent runtimes | The injection format is the contract; the registration differs per tool |
+| P2 | Rename `HAVOK_*` identifiers to `IC_*` with one release accepting both, then a deprecation window | Cosmetic mismatch with the product name; breaking for running instances, so it needs a migration, not a rename |
 | P2 | An MCP server exposing recall and write | So agents that cannot run hooks can still use it |
 | P2 | Memory import from existing notes | Markdown folders, Obsidian vaults |
 | P3 | Web view of the memory graph | The wikilinks already form one |

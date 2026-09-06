@@ -128,10 +128,24 @@ try {
   up = /"ok"\s*:\s*true/.test(out);
 } catch { up = false; }
 
+// KEEP THE EMBEDDER WARM. Five separate observations, 2026-09-05 and 06, of the first recall after
+// idle costing 1.7s (1783, 929, 496, 1071, 1780ms) against 5 to 23ms warm. The pattern fits the
+// embedding model being paged out of a long-idle daemon and faulted back in on the first request.
+// This timer already runs every five minutes, so one tiny embedding per run keeps the model
+// resident, and the time it takes is itself the diagnostic: over a second means it had gone cold.
+// It hits the daemon directly, not /recall, so it never inflates the recall counts above.
+let warmMs = null;
+try {
+  const t0 = Date.now();
+  execFileSync('curl', ['-s', '--max-time', '10', '-X', 'POST', 'http://127.0.0.1:' + (process.env.HAVOK_EMBED_PORT || 8477) + '/embed', '-H', 'content-type: application/json', '--data-binary', JSON.stringify({ text: 'keep warm' })],
+    { encoding: 'utf8', timeout: 11000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+  warmMs = Date.now() - t0;
+} catch { warmMs = -1; }
+
 const sheet = {
   generated: new Date().toISOString(),
   windowHours: HOURS,
-  up, healthMs,
+  up, healthMs, embedWarmMs: warmMs,
   recalls: recalls.length,
   medianMs: pct(recalls.map((c) => c.ms).filter((x) => x !== null), 0.5),
   p95Ms: pct(recalls.map((c) => c.ms).filter((x) => x !== null), 0.95),
@@ -177,6 +191,7 @@ say('');
 say('  BRAIN RESULTS, last ' + HOURS + 'h                       ' + now.slice(0, 16).replace('T', ' '));
 say('  ' + '-'.repeat(64));
 say('  server        ' + (up === null ? 'not probed' : up ? 'UP, /health in ' + healthMs + 'ms' : 'DOWN'));
+say('  embedder      ' + (warmMs === null ? 'not probed' : warmMs < 0 ? 'DOWN or no daemon' : 'warm in ' + warmMs + 'ms' + (warmMs > 1000 ? '   <-- it had gone cold' : '')));
 say('  recalls       ' + recalls.length + '   median ' + sheet.medianMs + 'ms   p95 ' + sheet.p95Ms + 'ms   max ' + sheet.maxMs + 'ms');
 say('  returned 0    ' + empty.length);
 say('  slow > ' + SLOW_MS + 'ms  ' + slow.length);

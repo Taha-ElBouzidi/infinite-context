@@ -2,6 +2,10 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.1.3
+
+- identifier decision recorded, roadmap updated, version and changelog now follow the tag
+
 ## 0.1.2
 
 - Documentation: docs/OPTIONS.md with a diagram per option, docs/BENCHMARKS.md with every measured number and its method, docs/GLOSSARY.md. Keyword-only against fused recall measured on the same corpus.

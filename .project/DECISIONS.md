@@ -159,3 +159,23 @@ are batched, full GitFlow only for scheduled releases by large teams.
 with `release/*` and `hotfix/*` as permanent fixtures, which adds ceremony without a team to need it.
 
 **Decider:** Repository owner
+
+---
+
+## [2026-09-06] Internal identifiers keep their HAVOK_ prefix for now
+
+**Status:** Active, revisit for 0.3.0
+
+**Decision:** Environment variables (`HAVOK_BRAIN`, `HAVOK_HOME`, `HAVOK_EMBED_PORT`, and the
+rest) and task names keep their current prefix in 0.x. The product is Infinite Context; the
+identifiers are not renamed yet.
+
+**Why:** Renaming is a breaking change for every running instance, including the authors' three
+machines, for a cosmetic mismatch a reader may notice and no user is blocked by. Doing it well
+means one release that accepts both prefixes, a documented migration, and a deprecation window.
+That is a 0.3.0 item, not a find-and-replace.
+
+**Rejected:** Renaming now, silently, across all tools. It would have broken the installs that
+prove the product works.
+
+**Decider:** Repository owner, delegated to the maintaining agent on 2026-09-06.
