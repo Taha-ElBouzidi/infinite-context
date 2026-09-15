@@ -2,9 +2,23 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.1.3
+## 0.2.0
 
-- identifier decision recorded, roadmap updated, version and changelog now follow the tag
+- The dashboard: your memories as a live picture, zero dependencies, fully themeable
+
+## 0.2.0
+
+- **The dashboard.** `node tools/dashboard.mjs --open` draws your memories as a live picture: a node
+  per memory, an edge per wikilink, and a current from the machine to the memory on every recall.
+  Zero dependencies, no build step; it reads `memory/` directly so it works on a fresh clone.
+- With an empty `memory/` it generates an example constellation rather than showing a black screen,
+  labelled as an example and replaced by your own the moment you write a memory.
+- Two layouts: Sphere groups by kind and bundles links through each band, Constellation positions
+  by link structure, computed on the client with no embeddings required.
+- Everything about the look is `dashboard/config.json`: name, tagline, regions and which memory
+  types fall in each, the whole palette, your own links in the rail, machines on or off.
+- Right click saves the view as a PNG with the long edge at 3840. Works on a phone, and can be
+  added to a home screen.
 
 ## 0.1.2
 

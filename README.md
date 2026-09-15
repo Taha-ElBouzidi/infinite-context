@@ -61,6 +61,28 @@ Measured on the authors' own 41-query set, on a brain of about 270 memories:
 
 Your numbers will differ. Measure them: `node tools/eval-recall.mjs` and `node tools/bench-recall.mjs`.
 
+## See it
+
+```
+node tools/dashboard.mjs --open
+```
+
+Your memories as a live picture: every memory a node, every wikilink an edge, and a current that
+runs from the machine to the memory each time your agent recalls something. No build step, no
+install, no framework. It reads `memory/` directly, so it works on a clone that has never run
+anything else.
+
+**With an empty `memory/` it draws an example constellation**, so you can see what it is before you
+have written anything. That example disappears the moment you write a real memory.
+
+Two views: **Sphere** groups memories by kind and routes the links through each band so the middle
+stays readable, **Constellation** positions them by what links to what, so a cluster you can see is
+a subject your brain keeps together. Drag to turn it, click a memory to read its facts, right click
+to save the view as a 4K image.
+
+Name it, recolour it and choose its regions in `dashboard/config.json`. Full reference in
+[dashboard/README.md](dashboard/README.md).
+
 ## How it works
 
 **Memories are markdown files**, one fact per file, under `memory/`. Plain text, yours, diffable,

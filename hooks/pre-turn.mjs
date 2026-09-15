@@ -28,7 +28,7 @@
 // FAILS SILENT ALWAYS. Running on every turn means a crash here would break every turn of
 // every session on every machine. The worst acceptable outcome is the old behaviour.
 
-import { readFileSync, existsSync, writeFileSync, unlinkSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, appendFileSync, unlinkSync, statSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, hostname } from 'node:os';
@@ -160,7 +160,38 @@ function remoteEmbedConfig(brain) {
       const c = join(brain, 'server-cert.pem');
       if (existsSync(c)) cacert = c.replace(/\\/g, '/');
     }
-    if (token) REMOTE = { url, token, cacert };
+    // VERIFY AGAINST THE NAME, CONNECT TO THE IP. server-endpoint.json publishes the tailnet IP,
+    // and an old curl refuses to match an IP against the certificate even though the cert carries
+    // that IP as a SAN: schannel exit 60, "CertGetNameString() failed to match connection
+    // hostname". See reference_curl_schannel_ip_cert_mismatch.
+    //
+    // PROVEN ON the locked-down client machine, 2026-09-15, by that machine's own agent replaying these exact configs:
+    // the ONLY curl on its PATH is C:\Windows\System32\curl.exe 8.4.0, and both /pulse and
+    // /recall came back exit 60. So that laptop has been running KEYWORD-ONLY recall while
+    // everything else said it was connected, and no pulse from it could ever arrive.
+    //
+    // brain-client.mjs and pull-from-server.mjs were fixed earlier the same day and this file was
+    // missed, which is the lesson: the fix belonged to every caller of the endpoint, not to the
+    // two tools that happened to surface it.
+    //
+    // connectTo is empty on the host itself, where url has already been rewritten to loopback.
+    let connectTo = '';
+    try {
+      const ep2 = JSON.parse(readFileSync(join(brain, 'server-endpoint.json'), 'utf8'));
+      const magic = (ep2.tailnet && ep2.tailnet.magicdns) || '';
+      const m = url.match(/^https?:\/\/([^:\/]+)(?::(\d+))?/);
+      if (magic && m && /^[0-9.]+$/.test(m[1]) && m[1] !== '127.0.0.1') {
+        connectTo = magic + ':' + m[2] + ':' + m[1] + ':' + m[2];
+        url = 'https://' + magic + (m[2] ? ':' + m[2] : '');
+      }
+    } catch { /* older endpoint file: keep the raw url */ }
+    // CONNECT TIMEOUT depends on WHERE the server is, which the old single value could not express.
+    // 1 second was chosen because a refused connection costs about 1100ms on every prompt, and on
+    // the host that is right: the destination is loopback and a second is an eternity. From a
+    // laptop across a DERP relay it is not: the handshake can outlast it and recall silently drops
+    // to keyword, which is exactly reference_recall_connect_timeout_derp. Remote gets 4.
+    const ct = connectTo ? 4 : 1;
+    if (token) REMOTE = { url, token, cacert, connectTo, ct };
   } catch { /* no endpoint, no vault access, or no age key: stay on keyword recall */ }
   return REMOTE;
 }
@@ -189,8 +220,9 @@ function fetchRulesRemote(brain) {
   try {
     const conf = 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
+      + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
       + 'url = "' + cfg.url + '/rules"' + '\n'
-      + 'silent' + '\n' + 'connect-timeout = 1' + '\n' + 'max-time = 5' + '\n';
+      + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
     const out = execFileSync('curl', ['-K', '-'], {
       input: conf, encoding: 'utf8', windowsHide: true, timeout: 6000, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -251,10 +283,11 @@ function fetchVectorRemote(text, brain) {
     const conf = 'header = "content-type: application/json"' + '\n'
       + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
+      + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
       + 'url = "' + cfg.url + '/embed"' + '\n'
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + JSON.stringify({ text }).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
-      + 'silent' + '\n' + 'connect-timeout = 1' + '\n' + 'max-time = 4' + '\n';
+      + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
     const out = execFileSync('curl', ['-K', '-'], {
       input: conf, encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -298,10 +331,11 @@ function fetchVectorsRemote(texts, brain) {
     const conf = 'header = "content-type: application/json"' + '\n'
       + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
+      + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
       + 'url = "' + cfg.url + '/embed"' + '\n'
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + JSON.stringify({ texts }).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
-      + 'silent' + '\n' + 'connect-timeout = 1' + '\n' + 'max-time = 8' + '\n';
+      + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 9' + '\n';
     const out = execFileSync('curl', ['-K', '-'], {
       input: conf, encoding: 'utf8', windowsHide: true, timeout: 9000, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -338,6 +372,63 @@ function fetchVectorsRemote(texts, brain) {
 // A bad RESPONSE does not mark the server down, only a failure to reach it does. A 400 from a
 // healthy server is a bug in this file, and disabling remote embedding for ten minutes because of
 // it would turn a small bug into an outage.
+// Tell the server which memories this turn used, so ONE machine can show all of them.
+//
+// The owner, 2026-09-15: "can you check if its working, because the other machine is on and
+// recalling". It was, and the map called it idle: every machine wrote its recall log to its own
+// disk and nothing collected them. This is the fix, and it rides the one channel every machine
+// already has, including the one the office proxy has cut off from GitHub.
+//
+// DETACHED AND UNWAITED, on purpose. This runs on every turn of every session. A hook that
+// blocks a prompt to file a statistic has its priorities backwards, so the child is spawned
+// with stdio ignored and unref'd: if the server is down, slow, or on the far side of a dead
+// relay, nothing here notices and the turn is already gone.
+function postPulse(hits, brain) {
+  try {
+    if (!hits.length) return;
+    const cfg = remoteEmbedConfig(brain);
+    if (!cfg) return;
+    const payload = JSON.stringify({
+      at: Date.now(), host: hostname(),
+      slugs: hits.map((h) => h.slug), how: hits.map((h) => h.how),
+    });
+    const conf = 'header = "content-type: application/json"' + '\n'
+      + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
+      + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
+      + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
+      + 'url = "' + cfg.url + '/pulse"' + '\n'
+      + 'request = "POST"' + '\n'
+      + 'data-binary = "' + payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
+      + 'silent' + '\n' + 'output = "/dev/null"' + '\n'
+      + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
+    // CONFIG IN A FILE, NOT ON A PIPE. The first version wrote the config to an unref'd child's
+    // stdin and returned immediately. That never delivered: on 2026-09-15 the locked-down client machine
+    // ran the hook live, recall succeeded through the server with 5 hits IN THE SAME PROCESS, and
+    // no pulse ever arrived, while a hand-typed POST from the same machine returned ok. So the
+    // transport was fine and the pattern was not: stdin is written asynchronously and the hook
+    // process exits before the bytes reach the child.
+    //
+    // A file is on disk before curl is spawned, so there is nothing left to deliver and the exit
+    // cannot race it. Detached so the child outlives this process, which is the whole point.
+    const dir = join(brain, '.pulse-tmp');
+    try { mkdirSync(dir, { recursive: true }); } catch { /* exists */ }
+    // Sweep anything older than five minutes. curl cannot delete its own config, so the previous
+    // run's file is cleaned by this one: self-healing, and it never grows.
+    try {
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      for (const f of readdirSync(dir)) {
+        const full = join(dir, f);
+        try { if (statSync(full).mtimeMs < cutoff) unlinkSync(full); } catch { /* raced */ }
+      }
+    } catch { /* sweeping is best effort */ }
+    const file = join(dir, 'p' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.conf');
+    writeFileSync(file, conf, { encoding: 'utf8', mode: 0o600 });
+    const child = spawn('curl', ['-K', file], { stdio: 'ignore', windowsHide: true, detached: true });
+    child.on('error', () => { /* no curl, no problem */ });
+    child.unref();
+  } catch { /* never break a turn to file a statistic */ }
+}
+
 function fetchRecallRemote(prompt, queries, brain) {
   if (remoteRecentlyFailed()) return null;
   const cfg = remoteEmbedConfig(brain);
@@ -347,10 +438,11 @@ function fetchRecallRemote(prompt, queries, brain) {
     const conf = 'header = "content-type: application/json"' + '\n'
       + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
+      + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
       + 'url = "' + cfg.url + '/recall"' + '\n'
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
-      + 'silent' + '\n' + 'connect-timeout = 1' + '\n' + 'max-time = 8' + '\n';
+      + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 9' + '\n';
     const out = execFileSync('curl', ['-K', '-'], {
       input: conf, encoding: 'utf8', windowsHide: true, timeout: 9000, stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -495,6 +587,46 @@ const ok = (ctx) => {
   process.exit(0);
 };
 
+// Recent conversation, for recall only. Never shown to the model, never used for the answer
+// budget: the budget must read what was actually asked, not what was discussed before it.
+//
+// Prefers an explicit `context` on the payload, which is what the eval harness supplies so the
+// behaviour can be tested without a live session. Otherwise it reads the tail of the transcript
+// Claude Code names in the payload.
+//
+// Capped hard. This is a topic hint, not a second prompt, and an unbounded tail would push the
+// question out of the way exactly as a long paste does.
+const CONTEXT_CHARS = 700;
+function readRecentContext(payload) {
+  try {
+    if (payload && typeof payload.context === "string" && payload.context.trim()) {
+      return payload.context.slice(-CONTEXT_CHARS);
+    }
+    const tp = payload && payload.transcript_path;
+    if (!tp || !existsSync(tp)) return "";
+    const lines = readFileSync(tp, "utf8").split(String.fromCharCode(10)).filter(Boolean);
+    const msgs = [];
+    // Newest first, stopping as soon as there is enough. A transcript can be tens of megabytes,
+    // so it is walked backwards and never parsed whole.
+    for (let i = lines.length - 1; i >= 0 && msgs.join(" ").length < CONTEXT_CHARS * 2; i -= 1) {
+      let o = null;
+      try { o = JSON.parse(lines[i]); } catch { continue; }
+      const role = o && o.message && o.message.role;
+      if (role !== "user" && role !== "assistant") continue;
+      const c = o.message.content;
+      let text = "";
+      if (typeof c === "string") text = c;
+      else if (Array.isArray(c)) text = c.filter((p) => p && p.type === "text").map((p) => p.text).join(" ");
+      text = String(text).replace(new RegExp("\\s+", "g"), " ").trim();
+      // Skip the harness noise: hook injections and tool dumps are not what the turn is about.
+      if (!text || text.length < 12) continue;
+      if (/HOW TO REPLY|BRAIN RECALL|system-reminder|<function_/i.test(text)) continue;
+      msgs.unshift(text.slice(0, 400));
+    }
+    return msgs.join(" ").slice(-CONTEXT_CHARS);
+  } catch { return ""; }
+}
+
 try {
   const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const marker = (() => {
@@ -522,8 +654,23 @@ try {
   let raw = '';
   try { raw = readFileSync(0, 'utf8'); } catch { /* no stdin */ }
   let prompt = '';
-  try { prompt = String(JSON.parse(raw || '{}').prompt || ''); } catch { prompt = raw; }
+  let payload = {};
+  try { payload = JSON.parse(raw || '{}'); prompt = String(payload.prompt || ''); } catch { prompt = raw; }
   if (!prompt.trim()) ok('');
+
+  // WHAT THE CONVERSATION IS ABOUT, not just what was typed last.
+  //
+  // 2026-09-11: a session deep in an Irium delivery report asked "I need to know who did what
+  // action" and recall returned GitHub Actions, the vault and WhatsApp. The word "action" was the
+  // only thing it had, because recall has only ever seen the current prompt.
+  // reference_irium_log_adm_audit, which is literally the memory for who changed what and when,
+  // never appeared.
+  //
+  // A short follow-up carries almost no topic. The topic lives in the messages before it, so the
+  // recent turns are read and used as an ADDITIONAL query rather than replacing the prompt: a
+  // prompt that does name its own subject keeps matching exactly as it did.
+  const recentContext = readRecentContext(payload);
+
 
   const head = prompt.slice(0, 2000).toLowerCase();
   const out = [];
@@ -722,7 +869,11 @@ try {
           return kept;
         }
 
-        const queries = (!hasArabic && prompt.length > 2000) ? chunkPrompt(prompt) : [queryText];
+        // The context is an EXTRA query, not a replacement. Scoring takes the best chunk, so a
+        // prompt that names its own subject keeps winning on its own chunk exactly as before,
+        // and a bare follow-up gains a second chance through the topic it sits in.
+        const baseQueries = (!hasArabic && prompt.length > 2000) ? chunkPrompt(prompt) : [queryText];
+        const queries = (!hasArabic && recentContext) ? baseQueries.concat([recentContext]) : baseQueries;
         const translationFailed = hasArabic && queryText === prompt.slice(0, 2000);
 
         // ASK THE SERVER FIRST. It holds the index and does the matching, so one round trip
@@ -797,7 +948,11 @@ try {
         // returned NOTHING, while the same question first returned the right memory at rank 1.
         // the owner pastes logs, emails and bank messages constantly, so this was not a rare shape.
         // Capped well above any real prompt purely so a pathological paste cannot dominate.
-        const words = new Set(qterms(prompt.slice(0, 20000).toLowerCase()));
+        // The context words join the keyword channel. "who did what action" alone tokenizes to
+        // action, which is why a GitHub Actions memory won. With the surrounding Irium report in
+        // scope, the ERP terms compete on their own merit.
+        const sparseSource = recentContext ? (recentContext + " " + prompt) : prompt;
+        const words = new Set(qterms(sparseSource.slice(0, 20000).toLowerCase()));
     const score = new Map();
     for (const w of words) {
       const slugs = idx ? idx.terms[w] : null;
@@ -842,6 +997,28 @@ try {
         how: bySparse.has(slug) && byDense.has(slug) ? 'both' : byDense.has(slug) ? 'meaning' : 'keyword',
         description: (idx && idx.descriptions[slug]) || '',
       }));
+    // RECALL PULSE LOG. Which memories this turn actually used, appended as one line.
+    //
+    // Nothing else in the system knows this. The brain server is deliberately dumb and never
+    // learns which memories matched (it returns a vector, not names), and the fusion happens
+    // here. So if anything is ever to SHOW the brain being used, the fact has to be written
+    // down at the only point that holds it, which is this one.
+    //
+    // Fails silent and is capped, like everything else in this hook: a recall must never be
+    // slowed or broken by bookkeeping about recall. Gitignored, local to each machine.
+    try {
+      const PULSE = join(BRAIN, '.recall-pulse.jsonl');
+      appendFileSync(PULSE, JSON.stringify({
+        at: Date.now(), host: hostname(), slugs: hits.map((h) => h.slug), how: hits.map((h) => h.how),
+      }) + '\n', 'utf8');
+      // Trim from the front once it grows, so an always-on machine cannot fill the disk with
+      // a log nobody reads twice. 400 turns is days of history and about 80 KB.
+      const lines = readFileSync(PULSE, 'utf8').split('\n').filter(Boolean);
+      if (lines.length > 400) writeFileSync(PULSE, lines.slice(-300).join('\n') + '\n', 'utf8');
+    } catch { /* bookkeeping only, never break a turn for it */ }
+    // And to the server, so the machine that draws the map sees every machine.
+    postPulse(hits, BRAIN);
+
     // RESULTS ALERTS, from tools/analytics.mjs on its five minute timer.
     //
     // A scheduled task cannot push to a phone, and a session may not be open. The one channel

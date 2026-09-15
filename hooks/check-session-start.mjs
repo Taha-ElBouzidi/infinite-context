@@ -1,7 +1,7 @@
 // SessionStart hook: pull the brain so the session starts current, report the
 // REAL pull result (no false "synced" on failure), and report brain health.
 // Injects a short note as additionalContext. Fails open and never blocks a session.
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
@@ -40,11 +40,17 @@ if (!isPluginCopy(HERE) && isBrainRepo(HERE) && !isBrainRepo(marked)) {
 
 const BRAIN = [process.env.HAVOK_BRAIN, marked, HERE].find(isBrainRepo) || HERE;
 
+const LF = String.fromCharCode(10);
 function runIn(cwd, cmd, ms) {
   try {
-    const out = execSync(cmd, { cwd, encoding: 'utf8', timeout: ms, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    return { ok: true, out };
-  } catch { return { ok: false, out: '' }; }
+    const out = execSync(cmd, { cwd, encoding: 'utf8', timeout: ms, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return { ok: true, out, err: '', stderr: '' };
+  } catch (e) {
+    // The first stderr line is what tells a wedged pull apart from a dead network in the banner.
+    const stderr = String((e && e.stderr) || '').trim();
+    const err = stderr.split(LF).map((l) => l.trim()).filter(Boolean)[0] || '';
+    return { ok: false, out: '', err, stderr };
+  }
 }
 const tryRun = (cmd, ms) => runIn(BRAIN, cmd, ms);
 
@@ -104,24 +110,46 @@ try {
 // it in another red-team pass.
 try {
   const cacheRoot = resolve(homedir(), '.claude', 'plugins', 'cache', 'havok-brain');
+  // The authoritative answer to which copy Claude Code loads is installed_plugins.json, not the
+  // oldest directory on disk. Reading the tree and naming whatever it finds first 'the recorded
+  // installPath' was wrong the moment a second version existed: it called the frozen 0.1.0 the
+  // loaded copy while the record pointed at 0.2.1 (a laptop client, 2026-09-07). Read the record.
+  let loadedPath = '';
+  let loadedVer = '';
+  try {
+    const reg = JSON.parse(readFileSync(resolve(homedir(), '.claude', 'plugins', 'installed_plugins.json'), 'utf8'));
+    const rec = ((reg.plugins || reg)['havok-brain@havok-brain'] || [])[0];
+    if (rec && rec.installPath) { loadedPath = resolve(rec.installPath); loadedVer = rec.version || ''; }
+  } catch { /* no record readable, name copies without claiming which loads */ }
   if (existsSync(cacheRoot)) {
-    const liveCount = readdirSync(join(BRAIN, "memory")).filter((f) => f.endsWith(".md")).length;
+    const liveCount = readdirSync(join(BRAIN, 'memory')).filter((f) => f.endsWith('.md')).length;
+    const copies = [];
     const stack = [cacheRoot];
     while (stack.length) {
       const dir = stack.pop();
       let kids = [];
       try { kids = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-      const hasMem = kids.some((k) => k.isDirectory() && k.name === "memory");
-      if (hasMem) {
-        const n = readdirSync(join(dir, "memory")).filter((f) => f.endsWith(".md")).length;
-        if (n < liveCount - 10) {
-          notes.push("STALE BRAIN COPY on this machine: " + dir.split(String.fromCharCode(92)).join("/") + " has " + n
-            + " memories against the live " + liveCount + ". It is not a git checkout, so nothing syncs it."
-            + " Harmless while it carries no hooks.json, but it is the recorded plugin installPath.");
-        }
+      if (kids.some((k) => k.isDirectory() && k.name === 'memory')) {
+        const n = readdirSync(join(dir, 'memory')).filter((f) => f.endsWith('.md')).length;
+        copies.push({ dir: resolve(dir), n, hooks: existsSync(join(dir, 'hooks', 'hooks.json')) });
         continue;
       }
       for (const k of kids) if (k.isDirectory()) stack.push(join(dir, k.name));
+    }
+    const norm = (p) => p.split(String.fromCharCode(92)).join('/');
+    const loaded = copies.find((c) => c.dir === loadedPath);
+    if (loaded && (loaded.n < liveCount - 10 || !loaded.hooks)) {
+      notes.push('STALE PLUGIN COPY LOADS HERE: the recorded install path ' + norm(loaded.dir) + ' (version '
+        + (loadedVer || '?') + ') has ' + loaded.n + ' memories against the live ' + liveCount
+        + (loaded.hooks ? '' : ' and no hooks.json') + '. Hook code runs from here. Fix: claude plugin marketplace update havok-brain, then claude plugin update havok-brain@havok-brain -y, then restart.');
+    }
+    const leftover = copies.filter((c) => c.dir !== loadedPath && (c.n < liveCount - 10 || !c.hooks));
+    if (leftover.length && loaded) {
+      notes.push('Old plugin copies left on disk, not loaded (' + leftover.map((c) => norm(c.dir).split('/').pop()).join(', ')
+        + '); the loaded one is ' + (loadedVer || '?') + '. Harmless, removable when convenient.');
+    } else if (leftover.length && !loadedPath) {
+      notes.push('Plugin copies found but installed_plugins.json was unreadable, so which one loads is unconfirmed: '
+        + leftover.map((c) => norm(c.dir) + ' (' + c.n + ' memories' + (c.hooks ? '' : ', no hooks') + ')').join('; ') + '.');
     }
   }
 } catch { /* a warning that fails is not worth breaking session start over */ }
@@ -196,6 +224,33 @@ try {
     }
   }
 } catch { /* the local clone still works, which is the whole point of keeping git */ }
+// Ask the server what this machine may read, with this machine's own token. Secrets are decrypted
+// on the host and served over TLS; the recipient list inside vault.json says nothing about a client
+// (a laptop client, 2026-09-06: the old count said 0 readable while brain-client fetched a secret three
+// times in a row, and every a laptop client session was told to run an onboarding that no longer applies).
+// The token goes in a curl config on stdin, never in argv. /vault/list carries names, never values.
+function vaultProbe(brain) {
+  let url = (process.env.HAVOK_SERVER_URL || '').replace(/[/]$/, '');
+  if (!url) { try { url = JSON.parse(readFileSync(join(brain, 'server-endpoint.json'), 'utf8')).url || ''; } catch { url = ''; } }
+  if (!url) url = 'https://127.0.0.1:8443';
+  let token = (process.env.HAVOK_SERVER_TOKEN || '').trim();
+  if (!token) { try { token = readFileSync(resolve(homedir(), '.claude', 'havok-server-token'), 'utf8').trim(); } catch { token = ''; } }
+  if (!token) return { code: 'no-token', count: 0 };
+  const cert = join(brain, 'server-cert.pem');
+  const conf = 'header = "Authorization: Bearer ' + token + '"' + LF
+    + (existsSync(cert) ? 'cacert = "' + cert.split(String.fromCharCode(92)).join('/') + '"' + LF : '')
+    + 'url = "' + url + '/vault/list"' + LF + 'silent' + LF + 'connect-timeout = 2' + LF + 'max-time = 5' + LF
+    + 'write-out = "__CODE__%{http_code}"' + LF;
+  let out = '';
+  try { out = execFileSync('curl', ['-K', '-'], { input: conf, encoding: 'utf8', timeout: 8000, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] }); }
+  catch (e) { out = String((e && e.stdout) || ''); }
+  const i = out.lastIndexOf('__CODE__');
+  if (i === -1) return { code: '000', count: 0 };
+  const code = out.slice(i + 8).trim() || '000';
+  let count = 0;
+  if (code === '200') { try { count = (JSON.parse(out.slice(0, i)).secrets || []).length; } catch { count = -1; } }
+  return { code, count };
+}
 // NEW MACHINE CHECK: name what git could not carry.
 //
 // git brings the memories, the rules, the hooks and the encrypted vault. It cannot bring the
@@ -203,6 +258,7 @@ try {
 // node_modules (283MB, gitignored). Both failures are silent: the vault just refuses to
 // decrypt, and recall quietly drops to keyword-only. On a fresh machine that reads as "the
 // brain is broken" rather than "two files are missing", so say exactly which.
+let serverAnswered = null;
 try {
   const agekey = resolve(homedir(), '.claude', 'havok-age-key.txt');
   const vaultPath = join(BRAIN, 'vault.json');
@@ -211,8 +267,30 @@ try {
   try { vault = JSON.parse(readFileSync(vaultPath, 'utf8')); } catch { /* no vault yet */ }
   const total = Object.keys(vault.secrets || {}).length;
   const readable = Object.values(vault.secrets || {}).filter((b) => b.keys && b.keys[me]).length;
+  let vaultHost = '';
+  try { vaultHost = String(JSON.parse(readFileSync(join(BRAIN, 'vault-recipients.json'), 'utf8')).host || '').toUpperCase(); } catch { vaultHost = ''; }
+  const isHost = vaultHost !== '' && vaultHost === me;
 
-  if (total > 0 && readable === 0) {
+  if (!isHost) {
+    // A client never decrypts locally, so the only true answer comes from the server. The same
+    // probe tells the sync banner whether the brain server is alive, which on a server-only
+    // machine is what matters, not GitHub.
+    const v = vaultProbe(BRAIN);
+    serverAnswered = v.code === '200' || v.code === '403';
+    if (total === 0) {
+      /* no vault here, nothing to say about secrets */
+    } else if (v.code === '200') {
+      notes.push('VAULT: ' + (v.count < 0 ? 'readable' : v.count + ' secret(s) readable') + ' through the server from ' + me + '. Fetch one with: node tools/brain-client.mjs secret <name>.');
+    } else if (v.code === '403') {
+      notes.push('VAULT: secrets are deliberately withheld from ' + me + ' (recall-scoped token). Memories and rules work normally. Do not ask the owner for a credential and do not run connect-machine.');
+    } else if (v.code === '401') {
+      notes.push('VAULT: the server rejected this machine token (401), so secrets are unavailable until the host issues a new one. Memories work from the local copy. Do not run connect-machine.');
+    } else if (v.code === 'no-token') {
+      notes.push('VAULT: no server token on ' + me + ', so secrets and live recall are unavailable until the host issues one (see reference_brain_live_server). Memories work from the local copy. Do not run connect-machine.');
+    } else {
+      notes.push('VAULT: the server did not answer /vault/list from ' + me + ' (curl ' + v.code + '). Secrets are unavailable until it is back; memories work from the local copy. Nothing to install.');
+    }
+  } else if (total > 0 && readable === 0) {
     // Self-onboard. The owner, 2026-08-21: "I don't want to do anything, all is gonna be done by the
     // agents." Generating a key and publishing the PUBLIC half grants nothing and leaks nothing,
     // so it is safe to do automatically. Approval stays a separate, deliberate step on the host,
@@ -260,16 +338,35 @@ try {
 // dirty they abort the pull with "local changes would be overwritten", which is how a
 // machine ends up stranded several commits behind, unable to fetch the very tooling that
 // would fix it. Scoped strictly to generated paths, never to memory/*.md, which is real data.
-const genDirty = tryRun('git status --porcelain -- memory/MEMORY.md index/ MANIFEST.md', 5000);
-if (genDirty.ok && genDirty.out.trim()) {
-  const restored = tryRun('git checkout -- memory/MEMORY.md index/ MANIFEST.md', 8000);
-  if (restored.ok) notes.push('Discarded local edits to generated files (memory/MEMORY.md, index/, MANIFEST.md) so the pull could proceed. They are rebuilt from memory/, nothing was lost.');
-}
+// A push-disabled machine is server-only: memories and rules come from the brain server and code
+// from the mirror. Its git remote may be unreachable by design (the locked-down client machine sits behind a
+// corporate proxy that answers 403 forever). Ask git once. If the remote cannot be reached, do not
+// restore generated files and do not pull: the restore was undoing the index the per-turn hook had
+// just repaired from the server, at every session start, for a pull that could never happen
+// (found by the the client company agent, 2026-09-07).
+const pushUrl = tryRun('git remote get-url --push origin', 5000);
+const serverOnly = pushUrl.ok && pushUrl.out.trim().startsWith('DISABLED-');
+const remoteReachable = serverOnly ? tryRun('git ls-remote --exit-code -q origin HEAD', 10000).ok : true;
+let beforeRev = tryRun('git rev-parse HEAD', 5000);
+let unwedge = { ok: true, out: '' };
+let pull = { ok: false, out: '', err: 'GitHub is not reachable from this machine', stderr: '' };
+if (remoteReachable) {
+  const genDirty = tryRun('git status --porcelain -- memory/MEMORY.md index/ MANIFEST.md', 5000);
+  if (genDirty.ok && genDirty.out.trim()) {
+    const restored = tryRun('git checkout -- memory/MEMORY.md index/ MANIFEST.md', 8000);
+    if (restored.ok) notes.push('Discarded local edits to generated files (memory/MEMORY.md, index/, MANIFEST.md) so the pull could proceed. They are rebuilt from memory/, nothing was lost.');
+  }
 
-// Honest pull: report success or failure, do not claim synced if it failed.
-// Capture HEAD first so we can tell what the pull actually brought in.
-const beforeRev = tryRun('git rev-parse HEAD', 5000);
-const pull = tryRun('git pull --no-rebase --quiet', 15000);
+  // Honest pull: report success or failure, do not claim synced if it failed.
+  // Capture HEAD first so we can tell what the pull actually brought in.
+  beforeRev = tryRun('git rev-parse HEAD', 5000);
+  // Before pulling, clear what the mirror left in the way. A mirror-delivered file at a path the
+  // incoming commit adds makes git refuse the pull, quietly, and with the git timer gone this is
+  // the only pull a client machine has. tools/unwedge-pull.mjs moves such untracked files aside
+  // and restores tracked ones only when their bytes match the remote. See its header.
+  unwedge = tryRun('node tools/unwedge-pull.mjs', 30000);
+  pull = tryRun('git pull --no-rebase --quiet', 15000);
+}
 
 // A git pull updates memory, tools and docs, but NOT the enforcement hooks: those load
 // from the installed Claude Code plugin, not from the working tree. So a machine can be
@@ -309,9 +406,34 @@ if (pull.ok) {
   }
 }
 
-const syncLine = pull.ok
-  ? 'Brain synced (git pull ok).' + (pushLine ? ' ' + pushLine : '')
-  : 'WARNING: brain pull FAILED (network or conflict). You may be running on STALE data. Run a manual sync or check connectivity before trusting memory.';
+// Each outcome is named. Unwedge exits 0 always, so this line is the only place a wedge that
+// came back would show, and 'FAILED (network or conflict)' told nobody which of the two it was:
+// a laptop that is offline and a laptop that is silently stale looked the same (a laptop client, 2026-09-06).
+const unwedgeSummary = (unwedge.out.split(LF).find((l) => l.startsWith('unwedge:')) || '').replace('unwedge: ', '').trim();
+const keptFiles = unwedge.out.split(LF).filter((l) => l.includes('kept, differs')).map((l) => l.split(': ').pop().trim());
+// Git names the files it refuses to overwrite on indented stderr lines. Those are the files unwedge
+// left alone (or never saw, on a machine whose tools are older than unwedge itself).
+const gitBlocked = /would be overwritten/.test(pull.stderr || '');
+const indented = new RegExp('^[ ' + String.fromCharCode(9) + ']+[^ ]');
+const gitFiles = gitBlocked ? (pull.stderr || '').split(LF).filter((l) => indented.test(l)).map((l) => l.trim()).filter((l) => !/^Please|^Aborting|^error|^hint/.test(l)) : [];
+const blockedFiles = keptFiles.length ? keptFiles : gitFiles;
+const offline = !remoteReachable || /fetch failed/.test(unwedgeSummary) || /unable to access|Could not read from remote|Could not resolve|Connection refused|timed out|Network is unreachable/.test(pull.stderr || '');
+const unwedgeNote = unwedge.ok ? '' : ' Unwedge did not run on this machine (tools older than the fix, or node failed); pull it once by hand.';
+let syncLine;
+if (pull.ok) {
+  const touched = /moved [1-9]|restored [1-9]/.test(unwedgeSummary);
+  syncLine = 'Brain synced (git pull ok).' + (touched ? ' Unwedge first: ' + unwedgeSummary + '.' : '') + (pushLine ? ' ' + pushLine : '');
+} else if (blockedFiles.length) {
+  syncLine = 'WARNING: brain pull BLOCKED by ' + blockedFiles.length + ' local file(s) that differ from the remote, left untouched to protect work: ' + blockedFiles.join(', ') + '. Memory is STALE until they are reconciled by hand: diff each against origin, then git checkout -- <file> or commit it.' + unwedgeNote;
+} else if (offline && serverOnly && serverAnswered) {
+  syncLine = 'Server-only machine: GitHub is not reachable from here, which is expected on this network. Memories and rules come from the brain server, which answered; code arrives through the mirror. Nothing is stale.';
+} else if (offline && serverOnly) {
+  syncLine = 'WARNING: server-only machine, and the brain server did not answer at session start. Recall runs on the local fallback copy until it is back; say so in your first reply if memory matters for the task.';
+} else if (offline) {
+  syncLine = 'WARNING: brain pull FAILED, the remote could not be reached' + (pull.err ? ' (' + pull.err + ')' : '') + '. Memory is STALE; nothing local was changed.' + unwedgeNote;
+} else {
+  syncLine = 'WARNING: brain pull FAILED' + (pull.err ? ': ' + pull.err : ' for an unnamed reason') + '. Memory is STALE. Run git pull by hand to see the full error.' + (unwedge.ok ? ' Unwedge ran first (' + (unwedgeSummary || 'no output') + ').' : unwedgeNote);
+}
 
 // Self-install the native git gate. core.hooksPath is per-clone config and therefore NOT
 // carried by git, so a machine that pulls the brain would get hooks/git/pre-commit as an
@@ -327,10 +449,13 @@ if (!hp.ok || hp.out !== 'hooks/git') {
 // dropped in favour of verification: the whole brain is directly editable and `verify.mjs`
 // is the gate. A stale PR count told an agent nothing actionable; a red brain does.
 // Costs about 1.3s. Fails open, a broken or missing verifier must never block a session.
-const vr = tryRun('node "' + BRAIN.replace(/\\/g, '/') + '/tools/verify.mjs" --quiet', 25000);
-const prLine = vr.ok
-  ? 'Brain verify PASSED.'
-  : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
+// The gate guards commits. A push-disabled machine never commits to the shared brain (its writes go
+// through POST /memory and are gated on the server), so running verify here only cries wolf:
+// no local model, an index repaired from the server, no brain.json. Skip it, say why.
+const vr = serverOnly ? { ok: true, out: '' } : tryRun('node "' + BRAIN.split(String.fromCharCode(92)).join('/') + '/tools/verify.mjs" --quiet', 25000);
+const prLine = serverOnly
+  ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on the host and on every server write.'
+  : vr.ok ? 'Brain verify PASSED.' : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
 if (!vr.ok) {
   notes.push('Brain verification is failing. Fix before making other changes:');
   notes.push('  node tools/verify.mjs');

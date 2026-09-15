@@ -40,9 +40,13 @@ export const CASES = __ex(__jn(__BRAIN, 'eval-cases.json'))
 
 let hits = 0, misses = [], totalMs = 0, totalTokens = 0, silent = 0;
 
-for (const [q, expected] of CASES) {
+// A case may carry a THIRD element: the conversation that came before it. A short follow-up like
+// "who did what action" is meaningless on its own, and recall that only sees the prompt matches the
+// wrong topic entirely. Cases without it behave exactly as before.
+for (const [q, expected, context] of CASES) {
   const t0 = Date.now();
-  const r = spawnSync('node', [HOOK], { input: JSON.stringify({ prompt: q }), encoding: 'utf8' });
+  const payload = context ? { prompt: q, context } : { prompt: q };
+  const r = spawnSync('node', [HOOK], { input: JSON.stringify(payload), encoding: 'utf8' });
   const ms = Date.now() - t0;
   totalMs += ms;
 

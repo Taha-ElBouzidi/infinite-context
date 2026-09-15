@@ -21,7 +21,14 @@ import { pipeline, env } from '@xenova/transformers';
 
 env.allowLocalModels = false;
 
-const PORT = Number(process.env.HAVOK_EMBED_PORT || 8477);
+const DEFAULT_PORT = 8477;
+const PORT = Number(process.env.HAVOK_EMBED_PORT || DEFAULT_PORT);
+// The liveness marker describes THE daemon, the one on the default port that everything talks to.
+// An instance started on another port via HAVOK_EMBED_PORT is a test rig, and it must not touch the
+// marker at all. See the note below: the same-port duplicate was already guarded, the different-port
+// duplicate was not, and it binds successfully, so it claimed ownership and overwrote the marker
+// with its own pid. Found 2026-09-08 with three of them from a 2026-09-05 test still running.
+const IS_THE_DAEMON = PORT === DEFAULT_PORT;
 const MODEL = 'Xenova/all-MiniLM-L6-v2';
 
 process.stdout.write(`loading ${MODEL} ...\n`);
@@ -76,7 +83,14 @@ server.on('error', (e) => {
 // the per-turn hook stats the marker rather than probing the port.
 let ownsPort = false;
 server.listen(PORT, '127.0.0.1', () => {
-  ownsPort = true;
+  ownsPort = IS_THE_DAEMON;
+  // Guarding the delete alone was not enough: an instance on another port bound successfully and
+  // WROTE its own pid over the marker, so the file described a process nothing talks to. Found
+  // 2026-09-08, marker said 68888 while the daemon serving 8477 was 6276. Both sides need the guard.
+  if (!IS_THE_DAEMON) {
+    process.stdout.write('running on ' + PORT + ', not the default, so leaving the liveness marker alone' + String.fromCharCode(10));
+    return;
+  }
   try { writeFileSync(ALIVE, String(process.pid), 'utf8'); } catch {}
 });
 const cleanup = () => { if (ownsPort) { try { unlinkSync(ALIVE); } catch {} } process.exit(0); };

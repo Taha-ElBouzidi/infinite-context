@@ -49,6 +49,25 @@ function resolveServerUrl() {
   return 'https://127.0.0.1:8443';
 }
 const URL_BASE = resolveServerUrl();
+
+// VERIFY AGAINST THE NAME, CONNECT TO THE IP. Same fix as tools/pull-from-server.mjs, same
+// reason: the endpoint publishes the tailnet IP, and an old curl refuses to match an IP against
+// the certificate even though it carries that IP as a SAN (schannel exit 60, see
+// reference_curl_schannel_ip_cert_mismatch). Which curl happens to be first on PATH then decides
+// whether this tool says the server is reachable.
+//
+// On 2026-09-15 that produced the opposite lie to the one already recorded in
+// reference_brain_client_status_lies: this tool reported NOT reachable on a machine whose recalls
+// were arriving at the server with five hits each. --connect-to keeps the name for SNI and the
+// certificate check while the socket goes to the IP, so it needs neither DNS nor IP-SAN support.
+let MAGIC = '';
+try {
+  MAGIC = JSON.parse(readFileSync(join(BRAIN, 'server-endpoint.json'), 'utf8')).tailnet.magicdns || '';
+} catch { /* older endpoint file, fall back to the plain URL */ }
+const ADDR = URL_BASE.match(/^https?:\/\/([^:\/]+)(?::(\d+))?/) || [];
+const BY_NAME = Boolean(MAGIC && ADDR[1] && /^[0-9.]+$/.test(ADDR[1]));
+const CALL_BASE = BY_NAME ? 'https://' + MAGIC + (ADDR[2] ? ':' + ADDR[2] : '') : URL_BASE;
+const CONNECT_TO = BY_NAME ? MAGIC + ':' + ADDR[2] + ':' + ADDR[1] + ':' + ADDR[2] : '';
 const TOKEN_FILE = resolve(homedir(), '.claude', 'havok-server-token');
 const KEYFILE = resolve(homedir(), '.claude', 'havok-vault-key');
 
@@ -89,11 +108,16 @@ function call(path, { method = 'GET', body = null, timeoutSec = 20 } = {}) {
   }
   const lines = [
     'header = "Authorization: Bearer ' + t + '"',
-    'url = "' + URL_BASE + path + '"',
+    'url = "' + CALL_BASE + path + '"',
     'silent',
-    'connect-timeout = 2',
+    // 2 seconds was too tight for a machine reached over a DERP relay: a TLS handshake through
+    // Paris can outlast it and the tool then reports the server down, which is the same class of
+    // bug as reference_recall_connect_timeout_derp where connect-timeout=1 lost the same race.
+    // This is a status tool, not a hot path, so it can afford to wait.
+    'connect-timeout = 5',
     'max-time = ' + timeoutSec,
   ];
+  if (CONNECT_TO) lines.push('connect-to = "' + CONNECT_TO + '"');
   // PIN the certificate whenever the endpoint is https. Without this every call fails validation
   // against the self-signed cert, which is what made a healthy machine report the brain as down.
   // Never --insecure: that accepts any certificate and is worse than plaintext, because it looks

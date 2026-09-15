@@ -35,7 +35,7 @@ import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, statSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
-import { homedir, networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces, hostname } from 'node:os';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 // The SAME tokenizer the hook uses, imported rather than reimplemented. Two copies of a tokenizer
@@ -470,8 +470,11 @@ const handler = async (req, res) => {
       // pull that wedges on untracked files. Code is different: hooks and tools must be on disk
       // to execute, which is the whole reason this route exists.
       const allowed = () => {
+        // The plugin manifests and .mcp.json travel too, since 2026-09-07: a mirror-only machine
+        // installs the plugin from its local checkout, and claude plugin update compares versions,
+        // so without these a version bump never reaches the one laptop that cannot use GitHub.
         const list = ['server-cert.pem', 'server-endpoint.json', 'CLAUDE.md', 'REFLEX.md',
-          'METHODOLOGIES.md', 'GOVERNANCE.md'];
+          'METHODOLOGIES.md', 'GOVERNANCE.md', '.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json'];
         for (const d of ['tools', 'hooks']) {
           let names = [];
           try { names = readdirSync(join(BRAIN, d)); } catch { continue; }
@@ -652,9 +655,24 @@ const handler = async (req, res) => {
       if (!desc || desc.trim().length < 20) {
         return json(res, 400, { error: 'missing or thin description', detail: 'the description is the only thing indexed for recall. Write it in the words the owner would type, at least 20 chars.' });
       }
-      const declared = field('type');
-      if (declared && declared.trim() !== prefix) {
-        return json(res, 400, { error: 'type mismatch', detail: 'frontmatter type "' + declared.trim() + '" does not match slug prefix "' + prefix + '"' });
+      // TYPE MUST BE TOP LEVEL, not nested under metadata, and it must be present.
+      //
+      // field() searches with the m flag, so it happily matched an INDENTED "  type:" under
+      // metadata and let the write through. The mind-map builder only reads top-level keys, so
+      // reflect.mjs then failed the contract, and a failing reflection blocks the pre-commit gate
+      // on EVERY machine. On 2026-09-09 the WhatsApp instance wrote exactly that shape from a
+      // live client conversation and jammed commits brain-wide until someone found it by hand.
+      // Same poison-pill shape as a broken wikilink, so it is rejected in the same place: here,
+      // while the author is still around to fix it.
+      const topType = (head.match(/^type:[ 	]*(.+)$/m) || [])[1];
+      if (!topType) {
+        return json(res, 400, {
+          error: 'type must be top level',
+          detail: 'add a line "type: ' + prefix + '" at the top level of the frontmatter. Nested under metadata does not count: the mind map cannot see it and reflection then blocks commits on every machine.',
+        });
+      }
+      if (topType.trim() !== prefix) {
+        return json(res, 400, { error: 'type mismatch', detail: 'frontmatter type "' + topType.trim() + '" does not match slug prefix "' + prefix + '"' });
       }
 
       // WIKILINKS MUST POINT SOMEWHERE. This is not style, it is a poison pill.
@@ -759,6 +777,49 @@ const handler = async (req, res) => {
       audit('RECALL ' + ip + ' q=' + queries.length + ' chars=' + prompt.length
         + ' hits=' + ranked.length + ' ' + (Date.now() - tr) + 'ms');
       return json(res, 200, { ranked, v: indexVersion().version });
+    }
+
+    // WHICH MEMORIES A MACHINE ACTUALLY USED, collected centrally.
+    //
+    // The owner, 2026-09-15: "can you check if its working, because the other machine is on and
+    // recalling". It was, and the map showed it as idle, because each machine wrote its recall
+    // log to its OWN disk and nothing ever collected them. A machine that cannot reach GitHub
+    // can still reach this server, which is how it recalls in the first place, so this is the
+    // one channel every machine already has.
+    //
+    // ON PRIVACY, because this is a deliberate reversal. The audit line for /recall records
+    // counts only, never the prompt and never the matched slugs, and that stays true. This route
+    // records slugs and nothing else: no prompt, no answer, no content. A slug is the filename of
+    // a memory that is already sitting on this same disk, so writing it next to them adds no
+    // exposure. The prompt is what must never be written down, and it still is not.
+    if (path === '/pulse' && req.method === 'POST') {
+      let pbody = '';
+      for await (const chunk of req) {
+        pbody += chunk;
+        if (pbody.length > 20_000) { req.destroy(); return; }
+      }
+      let pp;
+      try { pp = JSON.parse(pbody || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
+      const host = String(pp.host || '').slice(0, 64);
+      const slugs = Array.isArray(pp.slugs)
+        ? pp.slugs.filter((x) => typeof x === 'string').slice(0, 20).map((x) => x.slice(0, 200))
+        : [];
+      const how = Array.isArray(pp.how)
+        ? pp.how.filter((x) => typeof x === 'string').slice(0, 20)
+        : [];
+      if (!host || !slugs.length) return json(res, 400, { error: 'host and slugs required' });
+      // The hook on THIS machine already wrote the line locally before posting. Appending it
+      // again here would double every recall the server itself makes.
+      if (host.toUpperCase() === hostname().toUpperCase()) return json(res, 200, { ok: true, skipped: 'local' });
+      const at = Number(pp.at) || Date.now();
+      try {
+        const PULSE = join(BRAIN, '.recall-pulse.jsonl');
+        appendFileSync(PULSE, JSON.stringify({ at, host, slugs, how }) + '\n', 'utf8');
+        const lines = readFileSync(PULSE, 'utf8').split('\n').filter(Boolean);
+        if (lines.length > 800) writeFileSync(PULSE, lines.slice(-600).join('\n') + '\n', 'utf8');
+      } catch { /* bookkeeping only */ }
+      audit('PULSE ' + ip + ' host=' + host + ' hits=' + slugs.length);
+      return json(res, 200, { ok: true });
     }
 
     if (path === '/embed' && req.method === 'POST') {

@@ -49,7 +49,8 @@ const SLOW_MS = 500;
 const SILENCE_MIN = 45;
 const ACTIVE_FROM = 8;   // local hour
 const ACTIVE_TO = 1;     // local hour, next day
-const DENIED_SPIKE = 5;  // from one non-local address inside the window
+const DENIED_SPIKE = 5;  // genuine auth failures from one non-local address inside the window
+const SCOPE_SPIKE = 50;  // scope refusals are by design (a machine's own session-start vault probe); only a flood is worth a line
 
 // ---- parse, identically to status.mjs so the two never disagree ---------------------------
 // 'Local' means this host itself: loopback, private LAN ranges, and the host's own tailnet address
@@ -84,7 +85,12 @@ const isActiveHour = (t) => { const h = new Date(t).getHours(); return h >= ACTI
 const recalls = calls.filter((c) => c.kind === 'RECALL');
 const writes = calls.filter((c) => c.kind === 'MEMORY-WRITE');
 const errors = calls.filter((c) => c.kind === 'ERROR');
-const denied = calls.filter((c) => c.kind === 'DENIED' || c.kind === 'REFUSED-SCOPE');
+// A genuine auth failure (DENIED, no or bad token) is a security signal. A REFUSED-SCOPE is not:
+// only an already-authenticated machine can trigger it, and every recall-scoped machine's own
+// session-start vault probe hits /vault/list and is refused by design. Lumping them made a
+// recall machine trip the intrusion alert at every session start (the client company, 2026-09-07).
+const denied = calls.filter((c) => c.kind === 'DENIED');
+const scopeRefused = calls.filter((c) => c.kind === 'REFUSED-SCOPE');
 const empty = recalls.filter((c) => c.hits === 0);
 const slow = recalls.filter((c) => c.ms !== null && c.ms > SLOW_MS);
 
@@ -155,7 +161,9 @@ const sheet = {
   writes: writes.length,
   errors: errors.map((c) => ({ at: new Date(c.t).toISOString(), who: c.who, line: c.line.slice(0, 140) })),
   denied: denied.length,
+  scopeRefused: scopeRefused.length,
   deniedByForeign: Object.entries(denied.filter((c) => !LOCAL.has(c.who)).reduce((a, c) => { a[c.who] = (a[c.who] || 0) + 1; return a; }, {})),
+  scopeRefusedByForeign: Object.entries(scopeRefused.filter((c) => !LOCAL.has(c.who)).reduce((a, c) => { a[c.who] = (a[c.who] || 0) + 1; return a; }, {})),
   silences,
   lastRecall: lastRecall ? new Date(lastRecall).toISOString() : null,
   liveGapMin,
@@ -170,7 +178,8 @@ if (slow.length) found.push({ id: 'slow', text: slow.length + ' recall(s) over '
 if (errors.length) found.push({ id: 'errors', text: errors.length + ' server ERROR line(s) in the last ' + HOURS + 'h' });
 if (silences.length) found.push({ id: 'silence', text: silences.length + ' silence(s) over ' + SILENCE_MIN + ' min during active hours, longest ' + Math.max(...silences.map((s) => s.minutes)) + ' min' });
 if (liveGapMin !== null && liveGapMin > SILENCE_MIN && isActiveHour(Date.now())) found.push({ id: 'silent-now', text: 'no recall reached the server for ' + liveGapMin + ' min and it is active hours' });
-for (const [ip, n] of sheet.deniedByForeign) if (n >= DENIED_SPIKE) found.push({ id: 'denied-' + ip, text: n + ' rejected requests from ' + ip });
+for (const [ip, n] of sheet.deniedByForeign) if (n >= DENIED_SPIKE) found.push({ id: 'denied-' + ip, text: n + ' unauthenticated request(s) refused from ' + ip });
+for (const [ip, n] of sheet.scopeRefusedByForeign) if (n >= SCOPE_SPIKE) found.push({ id: 'scope-' + ip, text: n + ' scope refusals from ' + ip + ' (a recall machine reaching for the vault far more than session-start probes explain)' });
 if (recalls.length && empty.length / recalls.length > 0.2) found.push({ id: 'empty', text: Math.round(100 * empty.length / recalls.length) + '% of recalls returned nothing' });
 
 // keep first-seen so the timer does not re-raise the same alert every five minutes
@@ -196,7 +205,7 @@ say('  recalls       ' + recalls.length + '   median ' + sheet.medianMs + 'ms   
 say('  returned 0    ' + empty.length);
 say('  slow > ' + SLOW_MS + 'ms  ' + slow.length);
 say('  writes        ' + writes.length);
-say('  errors        ' + errors.length + '    rejected ' + denied.length);
+say('  errors        ' + errors.length + '    auth-refused ' + denied.length + '    scope-refused ' + scopeRefused.length + ' (by design)');
 say('  last recall   ' + (sheet.lastRecall || 'none') + (liveGapMin !== null ? '   (' + liveGapMin + ' min ago)' : ''));
 if (Object.keys(byMachine).length) {
   say('');

@@ -111,13 +111,37 @@ if (!base) {
 if (!base) { out('no server endpoint published, cannot update'); done(1); }
 while (base.endsWith('/')) base = base.slice(0, -1);
 
+// VERIFY AGAINST THE NAME, CONNECT TO THE IP.
+//
+// server-endpoint.json publishes the tailnet IP, and the certificate does carry that IP as a
+// SAN, but an OLD curl will not match it: the 2023 build in C:\Windows\System32 fails with
+// schannel "CertGetNameString() failed to match connection hostname", exit 60, every time. See
+// reference_curl_schannel_ip_cert_mismatch. Which curl is first on PATH decides whether this
+// tool works, which is not a thing any tool should depend on.
+//
+// Found for real on 2026-09-15: the locked-down client machine could push memories and recall fine while
+// THIS tool reported "server unreachable", so that machine could never self-update its hooks and
+// sat on a version from 2026-09-07 with nobody noticing.
+//
+// --connect-to makes the request carry the MagicDNS name for SNI and certificate matching while
+// the socket still goes to the IP, so it needs no DNS (Tailscale DNS is deliberately off here)
+// and no IP-SAN support. Works on both curls.
+let magic = '';
+try { magic = JSON.parse(readFileSync(join(BRAIN, 'server-endpoint.json'), 'utf8')).tailnet.magicdns || ''; } catch { /* older endpoint file */ }
+const ipHost = (base.match(/^https?:\/\/([^:/]+)(?::(\d+))?/) || []);
+const useConnectTo = Boolean(magic && ipHost[1] && /^[0-9.]+$/.test(ipHost[1]));
+const namedBase = useConnectTo ? 'https://' + magic + (ipHost[2] ? ':' + ipHost[2] : '') : base;
+
 // Token in a curl config on stdin, never argv.
 function fetch(path, binary) {
   const conf = [
     'header = "Authorization: Bearer ' + token + '"',
-    'url = "' + base + path + '"',
+    'url = "' + namedBase + path + '"',
     'silent', 'connect-timeout = 5', 'max-time = 60',
   ];
+  if (useConnectTo) {
+    conf.push('connect-to = "' + magic + ':' + ipHost[2] + ':' + ipHost[1] + ':' + ipHost[2] + '"');
+  }
   if (base.slice(0, 6).toLowerCase() === 'https:' && existsSync(CERT)) {
     conf.push('cacert = "' + CERT.split(BS).join('/') + '"');
   }

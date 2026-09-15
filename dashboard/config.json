@@ -1,0 +1,34 @@
+{
+  "_": "Everything about how the dashboard looks lives here. Edit, save, reload the page. There is no build step. Delete this file and the defaults come back.",
+
+  "name": "Your AI",
+  "tagline": "the brain",
+
+  "_regions": "Memories are grouped into bands on the sphere. `types` matches the START of a memory's type, so 'feedback' also catches 'feedback_rule'. The last region is the fallback for anything unmatched. Add, remove or rename freely: the legend, the colours and the filters all follow this list.",
+  "regions": [
+    { "key": "IDENTITY",  "types": ["person", "user", "contact"], "color": "#8FA9CE" },
+    { "key": "PROJECTS",  "types": ["project"],                   "color": "#7FBBA4" },
+    { "key": "RULES",     "types": ["feedback", "rule"],          "color": "#D3A96B" },
+    { "key": "REFERENCE", "types": ["reference"],                 "color": "#A79FC0" }
+  ],
+
+  "_colors": "The whole palette. `accent` is the core and the highlights, `pulse` is the current that runs when a memory is recalled.",
+  "colors": {
+    "void": "#07080A",
+    "ink": "#EDEAE3",
+    "ink2": "#9B978D",
+    "ink3": "#5E5C56",
+    "accent": "#D9C08C",
+    "accent2": "#8C7A53",
+    "pulse": "#6FB7FF",
+    "pulse2": "#B9DDFF",
+    "up": "#6FD3A5",
+    "down": "#E0806A"
+  },
+
+  "_links": "Optional shortcuts in the side rail, to anything you want reachable from here. Left empty the section does not appear at all.",
+  "links": [],
+
+  "_showMachines": "Draw a node for each machine that has recalled recently, with the current running from it to the memory it used. Needs the recall pulse log; harmless when there is none.",
+  "showMachines": true
+}

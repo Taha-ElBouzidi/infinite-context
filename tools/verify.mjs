@@ -333,6 +333,23 @@ for (const f of ['havok-vault-key', '.vault-key', 'vault.key', 'havok-age-key.tx
   }
 }
 ok('no vault private key file inside the repo');
+// A hook change that leaves .claude-plugin/plugin.json at the same version reaches no machine:
+// claude plugin update compares versions, not content. Every machine sat on the 30 May install
+// with ZERO active plugin hooks until 2026-09-06, because the version never moved off 0.1.0.
+try {
+  const gitq = (args) => execFileSync('git', ['-C', BRAIN, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const staged = gitq(['diff', '--cached', '--name-only']).split(String.fromCharCode(10)).map((s) => s.trim()).filter(Boolean);
+  const hookChange = staged.filter((f) => f.startsWith('hooks/') && (f.endsWith('.mjs') || f.endsWith('.json')));
+  if (hookChange.length) {
+    const now = JSON.parse(readFileSync(join(BRAIN, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+    let head = '';
+    try { head = JSON.parse(gitq(['show', 'HEAD:.claude-plugin/plugin.json'])).version; } catch { head = ''; }
+    if (head === now) bad('hook code is staged (' + hookChange.join(', ') + ') but .claude-plugin/plugin.json is still ' + now + '. Bump the version, or no machine will ever load this change: claude plugin update compares versions, not content.');
+    else ok('hook change comes with a plugin version bump, ' + head + ' to ' + now);
+  } else {
+    ok('no hook code staged, plugin version may stay');
+  }
+} catch { ok('plugin version guard skipped: not a git checkout'); }
 if (!QUIET || failures.length) {
   console.log(`\n${failures.length ? 'BRAIN VERIFY FAILED' : 'BRAIN VERIFY PASSED'}: ${passes.length} passed, ${failures.length} failed`);
 }
