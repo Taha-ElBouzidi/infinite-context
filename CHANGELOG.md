@@ -2,9 +2,9 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.2.2
+## 0.2.3
 
-- Dashboard safe areas on tablets, and the canvas pinned to the viewport
+- Dashboard: size the canvas from the visual viewport, which is the only thing iPadOS reports correctly in a standalone app
 
 ## 0.2.2
 

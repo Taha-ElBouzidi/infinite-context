@@ -39,16 +39,23 @@
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{height:100%}
+/* overflow hidden as well: the same WebKit bug makes the phantom gap SCROLLABLE, so without
+   this the whole page can be dragged up to reveal it. */
+html,body{height:100%;overflow:hidden}
 body{margin:0;background:var(--void);color:var(--ink);font:14px/1.5 var(--sans);
   overflow:hidden;overscroll-behavior:none}
-body::after{content:"";position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;opacity:.22;
+body::after{content:"";position:fixed;top:0;left:0;width:var(--app-w,100%);height:var(--app-h,100%);
+  pointer-events:none;z-index:1;opacity:.22;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E")}
-/* inset:0 AND explicit 100%, both. inset alone loses to the canvas element's 300x150 intrinsic
-   size, which is how it once drew at half size. And 100vh is NOT the visual viewport on iPadOS:
-   it comes up short and the body shows through as a black strip along the bottom. inset:0 on a
-   fixed element is the viewport by definition, whatever the vh unit thinks. */
-canvas{position:fixed;inset:0;width:100%;height:100%;z-index:2;display:block;touch-action:none;cursor:grab}
+/* THE HEIGHT IS MEASURED IN JAVASCRIPT, NOT DECLARED IN CSS. In a standalone home screen app,
+   iPadOS miscalculates the bottom of the viewport for VIEWPORT-SIZED FIXED CONTAINERS, as though
+   Safari's toolbar were still there, and leaves a blank gap that is also scrollable. Apple fixed
+   it in Safari 26.1 beta. Every CSS unit meaning "the viewport" inherits the same wrong number,
+   so 100vh, 100dvh and inset:0 all fail identically.
+   window.visualViewport reports what is ACTUALLY visible, so --app-h comes from it and the two
+   full-bleed layers use that. Where there is no bug it equals the viewport and nothing changes. */
+canvas{position:fixed;top:0;left:0;width:var(--app-w,100%);height:var(--app-h,100%);
+  z-index:2;display:block;touch-action:none;cursor:grab}
 canvas.drag{cursor:grabbing}
 
 .ui{position:fixed;z-index:10}
@@ -577,7 +584,20 @@ function quality(now, dt){
   }
 }
 
+// What is actually visible, in CSS pixels. visualViewport is the only API that reports the real
+// thing on iOS; innerHeight is the fallback for browsers without it.
+function applyViewportSize(){
+  const vv = window.visualViewport;
+  const w = Math.round(vv ? vv.width : window.innerWidth);
+  const h = Math.round(vv ? vv.height : window.innerHeight);
+  const root = document.documentElement.style;
+  root.setProperty("--app-w", w + "px");
+  root.setProperty("--app-h", h + "px");
+  return { w, h };
+}
+
 function resize(){
+  applyViewportSize();
   // A retina phone would paint three times the pixels for the same page, and this scene is
   // fill-rate bound, not geometry bound. 1.6 on a small screen is still sharper than the dots
   // it draws. The measurement below takes it lower if even that is too much.
@@ -606,6 +626,13 @@ function resize(){
   }
 }
 window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", ()=>setTimeout(resize, 120));
+// The visual viewport changes without a window resize event: a keyboard opening, a toolbar
+// collapsing, and the moment iPadOS corrects the standalone height after launch.
+if (window.visualViewport){
+  window.visualViewport.addEventListener("resize", resize);
+  window.visualViewport.addEventListener("scroll", resize);
+}
 new ResizeObserver(()=>{ if(cv.clientWidth!==W||cv.clientHeight!==H) resize(); }).observe(cv);
 
 /* --- camera: a real trackball -------------------------------------------
