@@ -2,9 +2,29 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.2.5
+
+- Refuse to publish a release that has no changelog entry, and backfill the two that slipped
+
+## 0.2.5
+
+- The publisher refuses a release whose version has no section in this file. 0.2.3 and 0.2.4 both
+  shipped while this changelog still stopped at 0.2.2, because nothing checked.
+- Backfilled the 0.2.3 and 0.2.4 entries.
+
 ## 0.2.4
 
-- Dashboard: overdraw the ground past the reported viewport bottom
+- Dashboard: the page ground overdraws 120px past the bottom of the reported viewport. On iPadOS a
+  standalone app can report a viewport shorter than the screen, and a layout made entirely of
+  viewport-sized fixed elements then leaves an unpainted strip. A scrolling page never shows this,
+  which is the tell: its background covers the whole content flow.
+
+## 0.2.3
+
+- Dashboard: the canvas takes its size from `window.visualViewport` rather than any CSS viewport
+  unit. In a standalone app iPadOS miscalculates the bottom for viewport-sized fixed containers,
+  and `100vh`, `100dvh` and `inset:0` all inherit the same wrong number.
+- Dashboard: `overflow: hidden` on html and body, because that phantom gap is also scrollable.
 
 ## 0.2.2
 
