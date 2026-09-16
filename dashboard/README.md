@@ -7,7 +7,10 @@ runs from the machine to the memory each time your AI recalls something.
 node tools/dashboard.mjs --open
 ```
 
-<p align="center"><img src="../docs/dashboard.jpg" alt="The dashboard with a memory open: its facts, its links, and everything connected to it." width="900"></p>
+<p align="center"><img src="../docs/dashboard.jpg" width="900"
+     alt="The dashboard with one memory open: its description, its facts, its links, what it connects to, and the machines that have recalled recently."></p>
+
+<p align="center"><sub><i>A sample brain of 31 memories.</i></sub></p>
 
 That is the whole install. No build step, no npm install, no framework. It reads `memory/`
 directly, so it works on a clone that has never run anything else.
@@ -82,7 +85,8 @@ toggle hides every label, for a picture of the shape alone.
 
 ## On a phone
 
-<p align="center"><img src="../docs/dashboard-phone.jpg" alt="The dashboard on a phone, controls as one row of icons along the bottom." width="280"></p>
+<p align="center"><img src="../docs/dashboard-phone.jpg" width="260"
+     alt="The dashboard on a phone, controls as one row of icons along the bottom."></p>
 
 
 Add it to your home screen and it runs full screen with its own icon. The controls become one row

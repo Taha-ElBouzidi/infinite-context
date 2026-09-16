@@ -56,44 +56,49 @@ It reads `memory/` directly, so it runs on a clone that has never run anything e
 node tools/dashboard.mjs --open
 ```
 
-<p align="center"><img src="docs/dashboard.jpg" alt="The dashboard: a memory open in the side panel showing its facts, its link count and everything connected to it, with those links lit across the graph." width="900"></p>
+<p align="center">
+  <img src="docs/dashboard.jpg" width="900"
+       alt="The dashboard with one memory open. The side panel shows its description, two facts, four links and the time it was last recalled, with everything connected to it listed underneath. Those links are lit across the graph, and three machines are drawn as live nodes.">
+</p>
 
-**This is a first run, exactly as you will see it.** With an empty `memory/` the dashboard draws an
-example constellation and says so, rather than showing you a black screen. It disappears the moment
-you write a real memory.
+<p align="center"><sub><i>A sample brain of 31 memories. Click any memory to see its facts, its
+links, and the moment it was last recalled.</i></sub></p>
 
-Every memory is a node, every `[[wikilink]]` an edge, and a current runs from the machine to the
-memory each time your agent recalls something. A node grows with the number of facts it holds and
-the number of links into it, so the things your brain leans on are the things you see first.
+Every memory is a node. Every `[[wikilink]]` is an edge. A current runs from the machine to the
+memory each time your agent recalls something, so the picture moves while you work rather than
+sitting still.
 
 | | |
 |---|---|
-| gold | a memory being created, and its links drawing themselves in |
-| blue | a recall, running from the machine that asked to the memory it used |
-| red | a memory being deleted |
+| **a node grows** | with the facts it holds and the links into it, so what your brain leans on is what you see first |
+| **gold** | a memory being created, and its links drawing themselves in |
+| **blue** | a recall, running from the machine that asked to the memory it used |
+| **red** | a memory being deleted |
+| **green nodes** | the machines that have recalled recently, one per host |
 
-### Two ways to look at it
+### Two views of the same memory
 
 <table>
 <tr>
-<td width="50%"><img src="docs/dashboard-sphere.jpg" alt="Sphere view" width="100%"></td>
-<td width="50%"><img src="docs/dashboard-constellation.jpg" alt="Constellation view" width="100%"></td>
+<td width="50%"><img src="docs/dashboard-sphere.jpg" width="100%" alt="Sphere view: memories grouped into four coloured bands around a labelled core."></td>
+<td width="50%"><img src="docs/dashboard-constellation.jpg" width="100%" alt="Constellation view: the same memories positioned by what links to what, forming visible clusters."></td>
 </tr>
 <tr>
-<td><strong>Sphere</strong> groups memories by kind and routes every link through its band, so the
-middle stays readable however many you have.</td>
-<td><strong>Constellation</strong> positions them by what links to what, so a cluster you can see
-is a subject your brain keeps together.</td>
+<td valign="top"><b>Sphere</b> groups memories by kind and routes every link through its own band,
+so the middle stays readable however many you have.</td>
+<td valign="top"><b>Constellation</b> positions them by what links to what, so a cluster you can
+see is a subject your brain keeps together.</td>
 </tr>
 </table>
 
-Drag to turn it, scroll or pinch to zoom, click a memory to read its facts, search to filter, and
-use the Names toggle for a picture of the shape alone.
+Drag to turn it, scroll or pinch to zoom, type to filter, and use the Names toggle for the shape
+alone. **Starting from nothing, an empty `memory/` draws an example constellation and says so**, so
+your first run is a picture rather than a black screen. It disappears when you write a real memory.
 
 ### Make it yours
 
-**One file, no build step: `dashboard/config.json`.** Edit, save, reload the page. Delete it and
-the defaults come back. It documents itself: every key has a sibling `_key` line explaining it.
+**One file, no build step: `dashboard/config.json`.** Edit it, save, reload the page. Delete it and
+the defaults come back. It documents itself, every key has a sibling `_key` line explaining it.
 
 ```json
 {
@@ -112,24 +117,24 @@ the defaults come back. It documents itself: every key has a sibling `_key` line
 
 | key | what it changes |
 |---|---|
-| `name`, `tagline` | the wordmark, the browser tab, the label on the core |
+| `name`, `tagline` | the wordmark, the browser tab, and the label on the core |
 | `regions` | the bands, the legend, the filters and the node colours, all from this one list. Add, remove and rename freely |
 | `colors` | the whole palette, ten keys. Anything you leave out keeps its default |
 | `links` | your own shortcuts in the side rail. Left empty, the section does not appear |
 | `showMachines` | a node per machine that recalled recently, with the current running from it |
 
-Full reference, including what every colour key paints: **[dashboard/README.md](dashboard/README.md)**.
+The screenshots above are that file with four lines changed. Full reference, including what every
+colour key paints: **[dashboard/README.md](dashboard/README.md)**.
 
 ### On your phone
 
-<p align="center"><img src="docs/dashboard-phone.jpg" alt="The dashboard on a phone: the same constellation full screen, with the controls as one row of icons along the bottom." width="300"></p>
+<img src="docs/dashboard-phone.jpg" align="right" width="200" alt="The dashboard on a phone: the graph full screen, with the controls as one row of icons along the bottom.">
 
-Add it to your home screen and it runs full screen with its own icon. The side rail becomes a sheet
-and the controls become one row of icons along the bottom. Nothing is removed.
+Add it to your home screen and it runs full screen with its own icon. The side rail becomes a sheet, and the controls become one row of icons along the bottom. Nothing is removed.
 
-Serve it to your other devices with `--host 0.0.0.0`, or keep it on loopback, which is the default
-and the safer one: a picture of your own memory is not something to put on every interface by
-accident.
+Serve it to your other devices with `--host 0.0.0.0`, or keep it on loopback, which is the default and the safer one: a picture of your own memory is not something to put on every interface by accident.
+
+<br clear="right">
 
 ## What you get
 

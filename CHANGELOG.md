@@ -2,6 +2,17 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.2.9
+
+- **Dashboard: the `hidden` attribute never worked on the example banner.** `.demo` sets
+  `display: flex`, and any author rule that sets display beats the browser's own
+  `[hidden] { display: none }`. So the banner kept telling people their `memory/` folder was empty
+  while their own memories were drawn behind it, in every release from 0.2.0. One `[hidden]` rule
+  fixes it, and every other element toggled with `el.hidden` on that page depended on it too.
+- README: the dashboard screenshots are of a populated brain rather than the empty-folder state,
+  with captions, a side-by-side of the two views, and the phone shot beside the text instead of
+  dropped between paragraphs.
+
 ## 0.2.8
 
 - README: the dashboard now has its own section with screenshots, placed right after the quick

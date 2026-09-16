@@ -39,6 +39,12 @@
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* THE hidden ATTRIBUTE NEEDS THIS, and without it it does nothing here. The browser's own
+   [hidden]{display:none} is a UA rule, so ANY author rule that sets display beats it: .demo
+   sets display:flex, so the example banner stayed on screen telling people their memory/
+   folder was empty while their own memories were drawn behind it. Shipped that way from
+   0.2.0 to 0.2.8. Every element toggled with el.hidden depends on this one line. */
+[hidden]{display:none !important}
 /* NO overflow:hidden on the root. The root's overflow propagates to the VIEWPORT, and the
    viewport rect is the very number iPadOS gets wrong, so hiding there clips the ground back to
    the short height and the black strip comes straight back. The page is left scrollable and the
