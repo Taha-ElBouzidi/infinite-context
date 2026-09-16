@@ -306,7 +306,9 @@ const FM = (type, link) => '---\nname: Deep test probe\n'
     : pass('TLS key ACL', '<user> and SYSTEM only');
 }
 {
-  const acl = execFileSync('icacls', ['D:\\dev\\Havok\\havok-brain\\hooks\\pre-turn.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
+  // Derived, never typed. The line above already derives the key path; this one was missed
+  // and shipped one machine's directory layout to everyone who cloned the engine.
+  const acl = execFileSync('icacls', [join(BRAIN, 'hooks', 'pre-turn.mjs')], { encoding: 'utf8', windowsHide: true, timeout: 15000 });
   /Authenticated Users/i.test(acl) ? fail('hook not writable by others', 'Authenticated Users still has access')
     : pass('hook not writable by others', 'Administrators, SYSTEM, <user> only');
 }

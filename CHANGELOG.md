@@ -2,9 +2,20 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.2.0
+## 0.2.1
 
-- The dashboard: your memories as a live picture, zero dependencies, fully themeable
+- Ship the doc the code cites, and check that published files belong here, not just that they name nobody
+
+## 0.2.1
+
+- `MINDMAP_NODES.md` now ships. `reflect.mjs` and `fix-mindmap-type.mjs` both cite it by name, and
+  since the dashboard landed it is the document that says what becomes a node, so a reader who
+  followed the citation previously found nothing.
+- The exporter checks whether a file BELONGS here, not only whether it names anybody: absolute
+  paths, code reaching above the repo root, and citations of documents the export does not
+  contain. Three real problems had passed a clean identity scan.
+- Removed an absolute path from `status.mjs` and `deep-test.mjs`: both printed or probed one
+  machine's directory layout.
 
 ## 0.2.0
 

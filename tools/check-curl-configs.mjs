@@ -18,7 +18,7 @@ const src = readFileSync(resolve(BRAIN, "hooks/pre-turn.mjs"), "utf8")
 // Fixture values only. What is asserted below is the SHAPE of each config line, never the
 // address, so a real host has no business being written into a test.
 const cfg = {
-  url: "https://brain.example.ts.net:8443", token: "TOKEN", cacert: "C:/cert.pem",
+  url: "https://brain.example.ts.net:8443", token: "TOKEN", cacert: "<cert>.pem",
   connectTo: "brain.example.ts.net:8443:203.0.113.10:8443", ct: 4,
 }
 

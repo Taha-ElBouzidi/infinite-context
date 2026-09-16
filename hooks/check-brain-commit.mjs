@@ -55,7 +55,7 @@ try {
   }
 } catch { BRAIN = SELF_DIR; }
 
-// Only gate the Havok brain. Any other repo is none of this hook business.
+// Only gate the brain repo. Any other repo is none of this hook business.
 if (!existsSync(join(BRAIN, 'REFLEX.md')) || !existsSync(join(BRAIN, 'memory'))) allow();
 
 // Only gate an actual commit.

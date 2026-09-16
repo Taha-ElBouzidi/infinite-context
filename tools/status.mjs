@@ -148,7 +148,9 @@ if (process.platform === 'win32') {
       pending.push({
         what: 'the brain server still starts at LOGON, not at boot',
         why: 'after a reboot it stays down until you sign in at the keyboard, and every other machine sees the brain as unreachable until then',
-        run: 'powershell -ExecutionPolicy Bypass -File D:\\dev\\Havok\\havok-brain\\tools\\install-boot-task.ps1',
+        // Derived, because this string is an instruction the reader pastes into a shell,
+        // and one machine's path is wrong for everyone else who ever runs status.
+        run: 'powershell -ExecutionPolicy Bypass -File ' + join(BRAIN, 'tools', 'install-boot-task.ps1'),
         note: 'needs an ELEVATED PowerShell, once. AtStartup triggers are administrator-only. The logon trigger is kept as a fallback, so this cannot make things worse.',
       });
     }

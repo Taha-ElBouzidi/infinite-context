@@ -1,4 +1,4 @@
-// Scheduled sync engine for the Havok brain. Runs TWICE DAILY (08:00, 20:00) as a safety
+// Scheduled sync engine for the brain. Runs TWICE DAILY (08:00, 20:00) as a safety
 // net only: conversations push their own work on commit via hooks/git/post-commit, so this
 // exists purely to catch anything left behind. Commits what is safe to commit, pulls,
 // pushes. Logs every run to .sync.log. Never throws.

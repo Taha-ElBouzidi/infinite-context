@@ -463,7 +463,7 @@ if (!vr.ok) {
   notes.push('drifted from memory/, or reflect.mjs found contradictions.');
 }
 
-// Open reminders. REMINDERS.md says "any Havok agent surfaces the open ones proactively,
+// Open reminders. REMINDERS.md says "any agent surfaces the open ones proactively,
 // at session start", but nothing referenced the file, so nothing ever did. It was sitting
 // there with an ICO registration already overdue since 2026-07-01. A reminder nobody reads
 // is worse than no reminder: it creates the belief that something is being tracked.
