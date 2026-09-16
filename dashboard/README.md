@@ -75,9 +75,8 @@ from it. It needs the recall pulse log; with no log there are simply no machine 
 | red | a memory being deleted |
 | bigger and brighter | more facts and more links |
 
-Drag to turn it, scroll or pinch to zoom, click a memory to open it and see its facts. **Right
-click saves the view as a PNG** with the long edge at 3840, and the Names toggle hides every label
-first if you want the picture without the words.
+Drag to turn it, scroll or pinch to zoom, click a memory to open it and see its facts. The Names
+toggle hides every label, for a picture of the shape alone.
 
 ## On a phone
 

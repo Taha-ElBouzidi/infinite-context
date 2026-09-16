@@ -2,9 +2,27 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.2.5
+## 0.2.6
 
-- Refuse to publish a release that has no changelog entry, and backfill the two that slipped
+- Dashboard: the page is now a document taller than the viewport, not a fixed layer overdrawn past
+  it. The 0.2.4 overdraw did nothing, because a fixed element is laid out against the viewport rect
+  and clipped by it, and on iPadOS that rect is the number that is wrong. The body carries
+  `min-height: calc(var(--app-h) + 160px)` and the ground is absolute inside it, so it paints in
+  document coordinates the way an ordinary scrolling page does.
+- Dashboard: `overflow: hidden` comes OFF the root, since the root's overflow propagates to that
+  same broken viewport rect and clips the ground straight back. The page is genuinely scrollable
+  and the scroll is locked in JavaScript instead, so it looks scrollable and never moves. Panels
+  that scroll internally carry `overscroll-behavior: contain`, and the root hides its scrollbar.
+- Dashboard: safe-area insets are now per element and per device class rather than one rule for the
+  whole app. The detail panel gained `env(safe-area-inset-top)`, which it never had because it is
+  `position: fixed` and body padding does not reach a fixed element. On a tablet the bottom controls
+  no longer reserve `env(safe-area-inset-bottom)`. On a phone the icon bar has
+  `clamp(12px, env(safe-area-inset-bottom), 34px)` for rounded corners and the home indicator, and
+  everything that clears that bar grows by the same clamp.
+- Dashboard: the detail panel title moved off the display serif, which was unreadable at 27px on a
+  retina tablet.
+- Dashboard: the 4K image export is removed, with the right click binding on the canvas and its
+  rail row. The Names toggle stays.
 
 ## 0.2.5
 

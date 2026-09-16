@@ -39,23 +39,28 @@
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-/* overflow hidden as well: the same WebKit bug makes the phantom gap SCROLLABLE, so without
-   this the whole page can be dragged up to reveal it. */
-html,body{height:100%;overflow:hidden}
-/* The page colour on the ROOT as well: html is not clipped to the same wrong viewport number, so
-   this is what is actually behind the overdrawn strip. */
-html{background:var(--void)}
+/* NO overflow:hidden on the root. The root's overflow propagates to the VIEWPORT, and the
+   viewport rect is the very number iPadOS gets wrong, so hiding there clips the ground back to
+   the short height and the black strip comes straight back. The page is left scrollable and the
+   scroll is locked in JS instead: see lockScroll(). */
+/* The overshoot below would otherwise put a real scrollbar down the side of a desktop
+   window. Nothing here scrolls, so there is nothing for a scrollbar to say. */
+html{background:var(--void);overflow-x:hidden;scrollbar-width:none}
+html::-webkit-scrollbar{display:none}
+/* THE DOCUMENT IS TALLER THAN THE VIEWPORT ON PURPOSE. A scrolling page never shows this bug,
+   because its background is laid out in DOCUMENT coordinates where a short viewport number costs
+   it nothing. A page like this one is the opposite: every layer position:fixed and sized to the
+   viewport, which is exactly the shape the iPadOS bug hits.
+   A FIXED layer cannot fix it however tall you make it, because a fixed element is laid out
+   against the viewport rect and clipped by it, and that rect is the broken number. An in-flow
+   body with min-height past the viewport is not. */
 body{margin:0;background:var(--void);color:var(--ink);font:14px/1.5 var(--sans);
-  overflow:hidden;overscroll-behavior:none}
-/* OVERDRAWN ON PURPOSE, BY 120px. A scrolling page never shows this bug: its body background
-   covers the whole content flow, so a viewport number that comes up short costs it nothing. A
-   page like this one is the opposite, every layer position:fixed and sized to the viewport, which
-   is exactly the shape the iPadOS bug hits, and when the number is short nothing paints the last
-   30px. So the ground stops trying to be exactly the viewport and paints past the bottom. The
-   excess is below the fold and clipped when the number is right, and it is the missing strip when
-   it is wrong. The canvas keeps the measured height: the render maths depends on it. */
-body::after{content:"";position:fixed;top:0;left:0;width:var(--app-w,100%);
-  height:calc(var(--app-h,100%) + 120px);
+  position:relative;min-height:calc(var(--app-h,100vh) + 160px);
+  overflow-x:hidden;overscroll-behavior:none}
+/* The ground is ABSOLUTE and inset to the body box, so it covers the whole overshoot in document
+   coordinates: the one place the bug cannot reach. The canvas keeps the MEASURED height, because
+   the render maths depends on it. Only the ground overshoots. */
+body::after{content:"";position:absolute;top:0;left:0;right:0;bottom:0;
   pointer-events:none;z-index:1;opacity:.22;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E")}
 /* THE HEIGHT IS MEASURED IN JAVASCRIPT, NOT DECLARED IN CSS. In a standalone home screen app,
@@ -105,9 +110,9 @@ header>*{pointer-events:auto}
 .v.live .n{color:var(--go)}
 
 aside{top:calc(112px + env(safe-area-inset-top));left:calc(26px + env(safe-area-inset-left));
-  width:242px;max-height:calc(100vh - 205px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  width:242px;max-height:calc(100vh - 205px - env(safe-area-inset-top));
   display:flex;flex-direction:column}
-.rail{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--hair2) transparent;padding-right:4px}
+.rail{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--hair2) transparent;padding-right:4px}
 .rail::-webkit-scrollbar{width:3px}
 .rail::-webkit-scrollbar-thumb{background:var(--hair2)}
 .grp{margin-bottom:20px}
@@ -127,7 +132,7 @@ button.row.act svg{width:15px;height:15px;flex:none;opacity:.6}
 button.row.act:hover svg{opacity:1}
 .row.big .nm{font:400 17px/1.2 var(--serif);letter-spacing:.02em}
 
-.dock{bottom:calc(26px + env(safe-area-inset-bottom));left:calc(26px + env(safe-area-inset-left));
+.dock{bottom:26px;left:calc(26px + env(safe-area-inset-left));
   display:flex;gap:10px;align-items:center}
 .seg{display:flex;border:1px solid var(--hair);border-radius:2px;background:rgba(13,15,18,.72);
   backdrop-filter:blur(14px)}
@@ -138,7 +143,7 @@ button.row.act:hover svg{opacity:1}
 .seg button.on{color:var(--void);background:var(--gold)}
 .seg button:not(.on):hover{color:var(--ink)}
 
-.legend{bottom:calc(26px + env(safe-area-inset-bottom));right:calc(26px + env(safe-area-inset-right));
+.legend{bottom:26px;right:calc(26px + env(safe-area-inset-right));
   display:flex;flex-direction:column;gap:7px;align-items:flex-end}
 .lg{display:flex;align-items:center;gap:8px;font:500 9px/1 var(--mono);letter-spacing:.16em;
   text-transform:uppercase;color:var(--ink3)}
@@ -149,7 +154,7 @@ button.row.act:hover svg{opacity:1}
    of text scrolling over the graph, which is noise pretending to be information. One line that is
    always there and always true is worth more: is the brain being used, when last, by how many
    machines. The graph itself already shows WHICH memories. */
-.status{bottom:calc(26px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
+.status{bottom:26px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
   pointer-events:none;white-space:nowrap;
   font:500 9.5px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--ink3)}
 .status b{font-weight:600;color:var(--ink2);letter-spacing:.18em}
@@ -167,18 +172,18 @@ button.row.act:hover svg{opacity:1}
   100%{box-shadow:0 0 0 0 rgba(111,183,255,0)}}
 
 .panel{top:0;right:0;bottom:0;width:min(400px,86vw);background:linear-gradient(180deg,#0E1116,#0A0C0F);
-  border-left:1px solid var(--hair2);padding:26px;display:flex;flex-direction:column;gap:14px;
+  border-left:1px solid var(--hair2);padding:calc(26px + env(safe-area-inset-top)) 26px 26px;display:flex;flex-direction:column;gap:14px;
   transform:translateX(102%);transition:transform .42s cubic-bezier(.16,1,.3,1);z-index:20}
 .panel.open{transform:none}
-.panel .x{position:absolute;top:22px;right:24px;background:none;border:0;color:var(--ink3);
+.panel .x{position:absolute;top:calc(22px + env(safe-area-inset-top));right:24px;background:none;border:0;color:var(--ink3);
   font:400 20px/1 var(--sans);cursor:pointer;padding:4px}
 .panel .x:hover{color:var(--ink)}
-.panel h3{margin:0;font:400 27px/1.18 var(--serif);padding-right:26px}
+.panel h3{margin:0;font:500 21px/1.35 var(--sans);letter-spacing:-.01em;padding-right:26px}
 .panel .desc{color:var(--ink2);font-size:13.5px;line-height:1.62}
 .stats{display:flex;gap:24px;padding:15px 0;border-top:1px solid var(--hair);border-bottom:1px solid var(--hair)}
 .stats div .n{font:400 23px/1 var(--serif)}
 .stats div .l{margin-top:4px;font:600 8.5px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink3)}
-.links{overflow-y:auto;scrollbar-width:thin;display:flex;flex-direction:column}
+.links{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column}
 .links a{padding:8px 0;border-bottom:1px solid var(--hair);color:var(--ink);font-size:12.5px;
   text-decoration:none;cursor:pointer;display:flex;gap:9px;align-items:center}
 .links a:hover{color:var(--gold)}
@@ -190,7 +195,7 @@ button.row.act:hover svg{opacity:1}
    A pinch is not discoverable and a trackpad does not always send a wheel, so
    there is always a button. Sized for a thumb, not a cursor: 44px is the floor
    for a touch target and these are 42 with padding around them. */
-.zoomer{right:calc(26px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));
+.zoomer{right:calc(26px + env(safe-area-inset-right));bottom:96px;
   display:flex;flex-direction:column;
   border:1px solid var(--hair);border-radius:3px;overflow:hidden;
   background:rgba(13,15,18,.72);backdrop-filter:blur(14px)}
@@ -221,9 +226,9 @@ button.row.act:hover svg{opacity:1}
 @media (max-width:1100px){
   aside{width:206px;top:104px;left:18px}
   .row.big .nm{font-size:16px}
-  .dock{left:18px;bottom:calc(18px + env(safe-area-inset-bottom))}
-  .zoomer{right:18px;bottom:calc(88px + env(safe-area-inset-bottom))}
-  .legend{right:18px;bottom:calc(18px + env(safe-area-inset-bottom))}
+  .dock{left:18px;bottom:18px}
+  .zoomer{right:18px;bottom:88px}
+  .legend{right:18px;bottom:18px}
   header{padding:18px}
   .find{min-width:190px}
   .status{left:50%;transform:translateX(-50%)}
@@ -283,7 +288,12 @@ button.row.act:hover svg{opacity:1}
   .tabbar{display:grid;grid-template-columns:repeat(9,1fr);left:0;right:0;bottom:0;
     background:linear-gradient(180deg,rgba(10,12,15,.72),var(--void));
     backdrop-filter:blur(18px);border-top:1px solid var(--hair2);
-    padding-bottom:0;z-index:31}
+    /* PADDING AT THE BOTTOM AGAIN. It was set to 0 on 2026-09-15 because his shortcut
+       reported a 93px inset and the bar floated. The owner, 2026-09-16, looking at the fixed
+       build: "On ios add padding at the bottom to accommodate for the round screen". The
+       clamp keeps a floor of 12 so the glyphs never sit on the corner radius, and a
+       ceiling of 34 so a bad inset can never float the bar again. */
+    padding-bottom:clamp(12px, env(safe-area-inset-bottom), 34px);z-index:31}
   .tabbar button{appearance:none;background:none;border:0;color:var(--ink3);height:54px;
     display:grid;place-items:center;cursor:pointer;transition:color .18s,background .18s}
   .tabbar button svg{width:20px;height:20px;display:block}
@@ -293,7 +303,7 @@ button.row.act:hover svg{opacity:1}
   /* Above the bar, and reduced to what a glance needs: a bead for state, a clock for how long
      ago, a screen for how many machines. The words were three quarters of its width. */
   .status{left:0;right:0;transform:none;justify-content:center;gap:9px;
-    bottom:66px;font-size:10px;letter-spacing:.12em}
+    bottom:calc(66px + clamp(12px, env(safe-area-inset-bottom), 34px));font-size:10px;letter-spacing:.12em}
   .status .lbl{display:none}
   /* the diagnostic string is longer than the usual one word */
   .status .lbl.flash{max-width:92vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -307,7 +317,7 @@ button.row.act:hover svg{opacity:1}
     transform:translateY(102%);transition:transform .38s cubic-bezier(.16,1,.3,1);z-index:30}
   /* The bar sits above the sheet, so the sheet's own padding has to clear it or its last row is
      permanently under the icons. */
-  aside{padding-bottom:70px}
+  aside{padding-bottom:calc(70px + clamp(12px, env(safe-area-inset-bottom), 34px))}
   aside.open{transform:none}
   .sheetgrab{display:block;width:100%;height:26px;background:none;border:0;cursor:pointer;
     position:relative}
@@ -319,10 +329,10 @@ button.row.act:hover svg{opacity:1}
 
   .panel{width:100%;left:0;right:0;top:auto;bottom:0;max-height:82vh;
     border-left:0;border-top:1px solid var(--hair2);border-radius:16px 16px 0 0;
-    padding:20px 18px 74px;
+    padding:20px 18px calc(74px + clamp(12px, env(safe-area-inset-bottom), 34px));
     transform:translateY(102%)}
   .panel.open{transform:none}
-  .panel h3{font-size:23px}
+  .panel h3{font-size:19px}
   .panel .x{top:16px;right:16px;font-size:24px;padding:8px}
 }
 
@@ -364,10 +374,6 @@ html,body{overflow-x:hidden}
   <div class="rail">
     <div class="grp">
       <div class="kicker">View</div>
-      <button class="row act" id="saveImg" type="button">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M4 17v3h16v-3"/></svg>
-        <span class="nm">Save image</span><span class="sub">4K png</span></button>
       <button class="row act" id="toggleNames" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
           <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.6"/></svg>
@@ -636,6 +642,10 @@ function resize(){
     S.panY = Math.max(-s.y, Math.min(s.y, S.panY));
   }
 }
+// LOOKS SCROLLABLE, IS NOT. The document overshoots the viewport so its ground paints past a
+// short viewport number, but nothing here is meant to scroll: the canvas owns every gesture.
+function lockScroll(){ if (window.scrollY || window.scrollX) window.scrollTo(0, 0); }
+window.addEventListener("scroll", lockScroll, { passive:true });
 window.addEventListener("resize", resize);
 window.addEventListener("orientationchange", ()=>setTimeout(resize, 120));
 // The visual viewport changes without a window resize event: a keyboard opening, a toolbar
@@ -1438,46 +1448,10 @@ function drawAgents(){
   ctx.shadowBlur = 0;
 }
 
-/* --- save the view as an image ---------------------------------------------
-   The owner, 2026-09-15: "make the save image, when you use right click very high quality 4K".
-
-   The trick is to change NOTHING about the scene. Scaling W, H and the camera would mean the
-   export runs through code paths the screen never does, so the picture would differ from what he
-   is looking at in exactly the ways nobody notices until it is printed. Instead the canvas keeps
-   its logical size and only its backing store grows, with the transform scaled to match: every
-   font, line width, radius and glow scales itself, and the render is the same render.
-
-   The long edge lands on 3840, so a landscape window gives 4K wide and a phone gives 4K tall.  */
-function saveImage(){
-  const K = Math.min(6, 3840 / Math.max(W, H));
-  const outW = Math.round(W*K), outH = Math.round(H*K);
-  const bw = cv.width, bh = cv.height, cx = CX;
-  cv.width = outW; cv.height = outH;
-  ctx.setTransform(K,0,0,K,0,0);
-  // On screen the graph sits right of centre because the rail takes the left 274px. The rail is
-  // not in the picture, so in the picture that offset is just a third of the frame left empty.
-  CX = W/2;
-  S.exporting = true;
-  draw(performance.now(), 16);
-  S.exporting = false;
-  CX = cx;
-  const url = cv.toDataURL("image/png");
-  // Put the backing store back before anything else can paint, or the next frame draws into a
-  // 4K buffer stretched across the screen.
-  cv.width = bw; cv.height = bh;
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-  const d = new Date(), p2 = (x)=>String(x).padStart(2,"0");
-  const a = document.createElement("a");
-  a.href = url;
-  const stem = (CFG.name || "brain").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "brain";
-  a.download = `${stem}-${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`
-             + `-${p2(d.getHours())}${p2(d.getMinutes())}.png`;
-  a.click();
-  flash(outW + " by " + outH + " saved");
-}
-// Right click is the whole gesture: no menu, no button to find, and the browser's own menu on a
-// canvas offers nothing useful anyway.
-cv.addEventListener("contextmenu", (e)=>{ e.preventDefault(); saveImage(); });
+/* THE 4K IMAGE EXPORT IS GONE. The owner, 2026-09-16: "Remove the save image function
+   because it doesn't work too well." It was a right click on the canvas plus a rail row,
+   and it grew the canvas backing store to 3840 on the long edge to re-render the same
+   scene at scale. Do not put it back without him asking. */
 
 let flashUntil = 0, flashText = "";
 function flash(t){ flashText = t; flashUntil = Date.now() + 2600; }
@@ -1532,9 +1506,6 @@ const wp = (n)=>({ x:n.x+(n.dx||0), y:n.y+(n.dy||0), z:n.z+(n.dz||0) });
 
 function draw(now, dt){
   ctx.clearRect(0,0,W,H);
-  // On screen the canvas is transparent and the page paints the background. A saved PNG has no
-  // page behind it, so it would come out as dots on transparency.
-  if (S.exporting){ ctx.fillStyle = C("--void"); ctx.fillRect(0,0,W,H); }
   const focus = S.hover || S.selected;
   const near = focus ? new Set([focus, ...neighbours(focus)]) : null;
   const q = S.matches;
@@ -2333,7 +2304,6 @@ document.getElementById("menubtn").addEventListener("click", ()=>{
   S.pointers.clear(); S.drag=null; S.gesture=null;
 });
 document.getElementById("sheetclose").addEventListener("click", closeSheet);
-document.getElementById("saveImg").addEventListener("click", ()=>{ closeSheet(); saveImage(); });
 document.getElementById("toggleNames").addEventListener("click", ()=>{
   document.querySelector('.dock [data-t="labels"]').click();
 });
