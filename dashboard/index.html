@@ -42,17 +42,27 @@
 html,body{height:100%}
 body{margin:0;background:var(--void);color:var(--ink);font:14px/1.5 var(--sans);
   overflow:hidden;overscroll-behavior:none}
-body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:1;opacity:.22;
+body::after{content:"";position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;opacity:.22;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E")}
-canvas{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:2;display:block;touch-action:none;cursor:grab}
+/* inset:0 AND explicit 100%, both. inset alone loses to the canvas element's 300x150 intrinsic
+   size, which is how it once drew at half size. And 100vh is NOT the visual viewport on iPadOS:
+   it comes up short and the body shows through as a black strip along the bottom. inset:0 on a
+   fixed element is the viewport by definition, whatever the vh unit thinks. */
+canvas{position:fixed;inset:0;width:100%;height:100%;z-index:2;display:block;touch-action:none;cursor:grab}
 canvas.drag{cursor:grabbing}
 
 .ui{position:fixed;z-index:10}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .kicker{font:600 9px/1 var(--mono);letter-spacing:.26em;text-transform:uppercase;color:var(--ink3)}
 
+/* SAFE AREAS BELONG IN THE BASE RULES, NOT ONLY IN THE PHONE BLOCK. A 13 inch iPad in landscape
+   is 1288pt wide, which is ABOVE the 1100px breakpoint, so it lands on this desktop layout. On a
+   real desktop every inset is 0 and none of these calc() change anything; on a tablet they are
+   the difference between a readable title and one printed under the status bar. */
 header{top:0;left:0;right:0;display:flex;align-items:flex-start;justify-content:space-between;
-  padding:22px 26px;gap:20px;pointer-events:none}
+  padding:calc(22px + env(safe-area-inset-top)) calc(26px + env(safe-area-inset-right))
+          22px calc(26px + env(safe-area-inset-left));
+  gap:20px;pointer-events:none}
 header>*{pointer-events:auto}
 .mark{display:flex;align-items:baseline;gap:12px}
 .mark b{font:400 30px/1 var(--serif);letter-spacing:.06em}
@@ -76,7 +86,9 @@ header>*{pointer-events:auto}
 .v .l{margin-top:5px;font:600 8.5px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--ink3)}
 .v.live .n{color:var(--go)}
 
-aside{top:112px;left:26px;width:242px;max-height:calc(100vh - 205px);display:flex;flex-direction:column}
+aside{top:calc(112px + env(safe-area-inset-top));left:calc(26px + env(safe-area-inset-left));
+  width:242px;max-height:calc(100vh - 205px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  display:flex;flex-direction:column}
 .rail{overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--hair2) transparent;padding-right:4px}
 .rail::-webkit-scrollbar{width:3px}
 .rail::-webkit-scrollbar-thumb{background:var(--hair2)}
@@ -97,7 +109,8 @@ button.row.act svg{width:15px;height:15px;flex:none;opacity:.6}
 button.row.act:hover svg{opacity:1}
 .row.big .nm{font:400 17px/1.2 var(--serif);letter-spacing:.02em}
 
-.dock{bottom:26px;left:26px;display:flex;gap:10px;align-items:center}
+.dock{bottom:calc(26px + env(safe-area-inset-bottom));left:calc(26px + env(safe-area-inset-left));
+  display:flex;gap:10px;align-items:center}
 .seg{display:flex;border:1px solid var(--hair);border-radius:2px;background:rgba(13,15,18,.72);
   backdrop-filter:blur(14px)}
 .seg button{appearance:none;background:none;border:0;border-right:1px solid var(--hair);
@@ -107,7 +120,8 @@ button.row.act:hover svg{opacity:1}
 .seg button.on{color:var(--void);background:var(--gold)}
 .seg button:not(.on):hover{color:var(--ink)}
 
-.legend{bottom:26px;right:26px;display:flex;flex-direction:column;gap:7px;align-items:flex-end}
+.legend{bottom:calc(26px + env(safe-area-inset-bottom));right:calc(26px + env(safe-area-inset-right));
+  display:flex;flex-direction:column;gap:7px;align-items:flex-end}
 .lg{display:flex;align-items:center;gap:8px;font:500 9px/1 var(--mono);letter-spacing:.16em;
   text-transform:uppercase;color:var(--ink3)}
 .lg i{width:14px;height:1px;display:block}
@@ -117,7 +131,7 @@ button.row.act:hover svg{opacity:1}
    of text scrolling over the graph, which is noise pretending to be information. One line that is
    always there and always true is worth more: is the brain being used, when last, by how many
    machines. The graph itself already shows WHICH memories. */
-.status{bottom:26px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
+.status{bottom:calc(26px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
   pointer-events:none;white-space:nowrap;
   font:500 9.5px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--ink3)}
 .status b{font-weight:600;color:var(--ink2);letter-spacing:.18em}
@@ -158,7 +172,8 @@ button.row.act:hover svg{opacity:1}
    A pinch is not discoverable and a trackpad does not always send a wheel, so
    there is always a button. Sized for a thumb, not a cursor: 44px is the floor
    for a touch target and these are 42 with padding around them. */
-.zoomer{right:26px;bottom:96px;display:flex;flex-direction:column;
+.zoomer{right:calc(26px + env(safe-area-inset-right));bottom:calc(96px + env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;
   border:1px solid var(--hair);border-radius:3px;overflow:hidden;
   background:rgba(13,15,18,.72);backdrop-filter:blur(14px)}
 .zoomer button{appearance:none;background:none;border:0;border-bottom:1px solid var(--hair);

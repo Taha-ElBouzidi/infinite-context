@@ -2,9 +2,18 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.2.1
+## 0.2.2
 
-- Ship the doc the code cites, and check that published files belong here, not just that they name nobody
+- Dashboard safe areas on tablets, and the canvas pinned to the viewport
+
+## 0.2.2
+
+- Dashboard: safe-area insets moved into the base layout. A 13 inch iPad in landscape is 1288pt
+  wide, above the tablet breakpoint, so it landed on the desktop rules, which reserved nothing:
+  the title printed under the status bar and the controls sat in the home indicator.
+- Dashboard: the canvas is pinned to the viewport with `inset:0` instead of `100vh`, which is not
+  the visual viewport on iPadOS and left a black strip along the bottom where the body showed
+  through.
 
 ## 0.2.1
 
