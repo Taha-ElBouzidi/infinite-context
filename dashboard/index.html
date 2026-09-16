@@ -42,9 +42,20 @@
 /* overflow hidden as well: the same WebKit bug makes the phantom gap SCROLLABLE, so without
    this the whole page can be dragged up to reveal it. */
 html,body{height:100%;overflow:hidden}
+/* The page colour on the ROOT as well: html is not clipped to the same wrong viewport number, so
+   this is what is actually behind the overdrawn strip. */
+html{background:var(--void)}
 body{margin:0;background:var(--void);color:var(--ink);font:14px/1.5 var(--sans);
   overflow:hidden;overscroll-behavior:none}
-body::after{content:"";position:fixed;top:0;left:0;width:var(--app-w,100%);height:var(--app-h,100%);
+/* OVERDRAWN ON PURPOSE, BY 120px. A scrolling page never shows this bug: its body background
+   covers the whole content flow, so a viewport number that comes up short costs it nothing. A
+   page like this one is the opposite, every layer position:fixed and sized to the viewport, which
+   is exactly the shape the iPadOS bug hits, and when the number is short nothing paints the last
+   30px. So the ground stops trying to be exactly the viewport and paints past the bottom. The
+   excess is below the fold and clipped when the number is right, and it is the missing strip when
+   it is wrong. The canvas keeps the measured height: the render maths depends on it. */
+body::after{content:"";position:fixed;top:0;left:0;width:var(--app-w,100%);
+  height:calc(var(--app-h,100%) + 120px);
   pointer-events:none;z-index:1;opacity:.22;
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E")}
 /* THE HEIGHT IS MEASURED IN JAVASCRIPT, NOT DECLARED IN CSS. In a standalone home screen app,

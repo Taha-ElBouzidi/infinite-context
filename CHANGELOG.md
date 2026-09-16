@@ -2,9 +2,9 @@
 
 Infinite Context, infinite context for your AI model.
 
-## 0.2.3
+## 0.2.4
 
-- Dashboard: size the canvas from the visual viewport, which is the only thing iPadOS reports correctly in a standalone app
+- Dashboard: overdraw the ground past the reported viewport bottom
 
 ## 0.2.2
 
