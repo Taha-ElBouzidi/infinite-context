@@ -77,8 +77,8 @@ have written anything. That example disappears the moment you write a real memor
 
 Two views: **Sphere** groups memories by kind and routes the links through each band so the middle
 stays readable, **Constellation** positions them by what links to what, so a cluster you can see is
-a subject your brain keeps together. Drag to turn it, click a memory to read its facts, right click
-to save the view as a 4K image.
+a subject your brain keeps together. Drag to turn it, click a memory to read its facts, and use
+the Names toggle for a picture of the shape alone.
 
 Name it, recolour it and choose its regions in `dashboard/config.json`. Full reference in
 [dashboard/README.md](dashboard/README.md).

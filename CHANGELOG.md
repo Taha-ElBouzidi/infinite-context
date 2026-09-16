@@ -2,6 +2,11 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.2.7
+
+- README: the tour still told people to right click for a 4K image, which 0.2.6 removed. A shipped
+  instruction for a feature that is gone is worse than no instruction.
+
 ## 0.2.6
 
 - Dashboard: the page is now a document taller than the viewport, not a fixed layer overdrawn past
