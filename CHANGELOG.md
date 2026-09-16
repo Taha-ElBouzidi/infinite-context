@@ -2,6 +2,17 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.2.8
+
+- README: the dashboard now has its own section with screenshots, placed right after the quick
+  start. It was four paragraphs of prose buried below the benchmarks, with no picture anywhere in
+  the repository. A visual tool that nobody can see is a visual tool nobody installs.
+- README: the whole `dashboard/config.json` surface is shown inline, with a table of what each key
+  changes, so the theming is visible without opening a second file.
+- Dashboard: the example constellation no longer emits duplicate edges. Preferential attachment
+  could draw the same partner twice for one node, and the detail panel then listed that memory
+  twice under CONNECTED. The real graph already deduplicated; only the generated example did not.
+
 ## 0.2.7
 
 - README: the tour still told people to right click for a 4K image, which 0.2.6 removed. A shipped

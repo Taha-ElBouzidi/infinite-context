@@ -47,6 +47,90 @@ Paste this to Claude Code, or any agent that can run commands:
 `AGENTS.md` is written for the agent, every step is verifiable, and it will not report success
 until the last check passes.
 
+## The dashboard
+
+**Your whole memory as one picture, in one command.** No build step, no npm install, no framework.
+It reads `memory/` directly, so it runs on a clone that has never run anything else.
+
+```sh
+node tools/dashboard.mjs --open
+```
+
+<p align="center"><img src="docs/dashboard.jpg" alt="The dashboard: a memory open in the side panel showing its facts, its link count and everything connected to it, with those links lit across the graph." width="900"></p>
+
+**This is a first run, exactly as you will see it.** With an empty `memory/` the dashboard draws an
+example constellation and says so, rather than showing you a black screen. It disappears the moment
+you write a real memory.
+
+Every memory is a node, every `[[wikilink]]` an edge, and a current runs from the machine to the
+memory each time your agent recalls something. A node grows with the number of facts it holds and
+the number of links into it, so the things your brain leans on are the things you see first.
+
+| | |
+|---|---|
+| gold | a memory being created, and its links drawing themselves in |
+| blue | a recall, running from the machine that asked to the memory it used |
+| red | a memory being deleted |
+
+### Two ways to look at it
+
+<table>
+<tr>
+<td width="50%"><img src="docs/dashboard-sphere.jpg" alt="Sphere view" width="100%"></td>
+<td width="50%"><img src="docs/dashboard-constellation.jpg" alt="Constellation view" width="100%"></td>
+</tr>
+<tr>
+<td><strong>Sphere</strong> groups memories by kind and routes every link through its band, so the
+middle stays readable however many you have.</td>
+<td><strong>Constellation</strong> positions them by what links to what, so a cluster you can see
+is a subject your brain keeps together.</td>
+</tr>
+</table>
+
+Drag to turn it, scroll or pinch to zoom, click a memory to read its facts, search to filter, and
+use the Names toggle for a picture of the shape alone.
+
+### Make it yours
+
+**One file, no build step: `dashboard/config.json`.** Edit, save, reload the page. Delete it and
+the defaults come back. It documents itself: every key has a sibling `_key` line explaining it.
+
+```json
+{
+  "name": "Orbit",
+  "tagline": "second brain",
+  "regions": [
+    { "key": "PEOPLE", "types": ["person", "contact"], "color": "#E27D60" },
+    { "key": "WORK",   "types": ["project"],           "color": "#41B3A3" },
+    { "key": "NOTES",  "types": ["reference"],         "color": "#C38D9E" }
+  ],
+  "colors": { "void": "#101820", "accent": "#F6A21E", "pulse": "#4FC3F7" },
+  "links": [{ "label": "My notes", "url": "https://example.com" }],
+  "showMachines": false
+}
+```
+
+| key | what it changes |
+|---|---|
+| `name`, `tagline` | the wordmark, the browser tab, the label on the core |
+| `regions` | the bands, the legend, the filters and the node colours, all from this one list. Add, remove and rename freely |
+| `colors` | the whole palette, ten keys. Anything you leave out keeps its default |
+| `links` | your own shortcuts in the side rail. Left empty, the section does not appear |
+| `showMachines` | a node per machine that recalled recently, with the current running from it |
+
+Full reference, including what every colour key paints: **[dashboard/README.md](dashboard/README.md)**.
+
+### On your phone
+
+<p align="center"><img src="docs/dashboard-phone.jpg" alt="The dashboard on a phone: the same constellation full screen, with the controls as one row of icons along the bottom." width="300"></p>
+
+Add it to your home screen and it runs full screen with its own icon. The side rail becomes a sheet
+and the controls become one row of icons along the bottom. Nothing is removed.
+
+Serve it to your other devices with `--host 0.0.0.0`, or keep it on loopback, which is the default
+and the safer one: a picture of your own memory is not something to put on every interface by
+accident.
+
 ## What you get
 
 Measured on the authors' own 41-query set, on a brain of about 270 memories:
@@ -60,28 +144,6 @@ Measured on the authors' own 41-query set, on a brain of about 270 memories:
 | keyword-only, for comparison | 92.7%, twice as fast, and 2 of 20 prompts came back empty |
 
 Your numbers will differ. Measure them: `node tools/eval-recall.mjs` and `node tools/bench-recall.mjs`.
-
-## See it
-
-```
-node tools/dashboard.mjs --open
-```
-
-Your memories as a live picture: every memory a node, every wikilink an edge, and a current that
-runs from the machine to the memory each time your agent recalls something. No build step, no
-install, no framework. It reads `memory/` directly, so it works on a clone that has never run
-anything else.
-
-**With an empty `memory/` it draws an example constellation**, so you can see what it is before you
-have written anything. That example disappears the moment you write a real memory.
-
-Two views: **Sphere** groups memories by kind and routes the links through each band so the middle
-stays readable, **Constellation** positions them by what links to what, so a cluster you can see is
-a subject your brain keeps together. Drag to turn it, click a memory to read its facts, and use
-the Names toggle for a picture of the shape alone.
-
-Name it, recolour it and choose its regions in `dashboard/config.json`. Full reference in
-[dashboard/README.md](dashboard/README.md).
 
 ## How it works
 

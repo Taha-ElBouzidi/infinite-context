@@ -7,6 +7,8 @@ runs from the machine to the memory each time your AI recalls something.
 node tools/dashboard.mjs --open
 ```
 
+<p align="center"><img src="../docs/dashboard.jpg" alt="The dashboard with a memory open: its facts, its links, and everything connected to it." width="900"></p>
+
 That is the whole install. No build step, no npm install, no framework. It reads `memory/`
 directly, so it works on a clone that has never run anything else.
 
@@ -79,6 +81,9 @@ Drag to turn it, scroll or pinch to zoom, click a memory to open it and see its 
 toggle hides every label, for a picture of the shape alone.
 
 ## On a phone
+
+<p align="center"><img src="../docs/dashboard-phone.jpg" alt="The dashboard on a phone, controls as one row of icons along the bottom." width="280"></p>
+
 
 Add it to your home screen and it runs full screen with its own icon. The controls become one row
 of icons along the bottom.

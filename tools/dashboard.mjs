@@ -177,13 +177,21 @@ function constellation(cfg, count = 140) {
       deg: 0,
     });
   }
+  // Deduplicated the same way the real graph is, and for the same reason: preferential attachment
+  // can draw the same partner twice for one node, and an undirected pair drawn twice is one
+  // relationship. Without this the detail panel listed a memory twice under CONNECTED, which is
+  // how it was caught.
   const edges = [];
+  const seen = new Set();
   const pool = [0];
   for (let i = 1; i < nodes.length; i++) {
     const n = 1 + Math.floor(rnd() * 3);
     for (let k = 0; k < n; k++) {
       const j = pool[Math.floor(rnd() * pool.length) % pool.length];
       if (j === i) continue;
+      const key = i < j ? i + ':' + j : j + ':' + i;
+      if (seen.has(key)) continue;
+      seen.add(key);
       edges.push([nodes[i].slug, nodes[j].slug]);
       nodes[i].deg++;
       nodes[j].deg++;
