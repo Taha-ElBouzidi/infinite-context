@@ -197,6 +197,35 @@ node tools/analytics.mjs       # results sheet from every logged call, with aler
 | [AGENTS.md](AGENTS.md) | for the agent installing it |
 | [.project/DECISIONS.md](.project/DECISIONS.md) | why it is built this way |
 
+## Using it with Codex
+
+The recall hook is not Claude-only. OpenAI Codex (the CLI and the IDE extension) has the same
+`UserPromptSubmit` and `SessionStart` hooks and takes the same output, so the same hook gives Codex
+the same memory. One command wires it:
+
+```
+node tools/setup-codex.mjs            add --check to run the tests without changing anything
+```
+
+It writes three files in `~/.codex` (or `CODEX_HOME`), each backed up first:
+
+| file | what it gets |
+|---|---|
+| `hooks.json` | recall on every prompt and the session-start banner. Hooks already there are kept. |
+| `config.toml` | Codex's own memories switched off, so there is one memory, not two. |
+| `AGENTS.md` | a short block saying where the memory is, and what to do if recall does not appear. |
+
+Then it runs each hook exactly as Codex will and prints PASS or FAIL.
+
+**One step is yours:** Codex skips a hook until you trust it. Open Codex, type `/hooks`, trust the
+hooks, and start a new session. You will see the recall block on your first prompt.
+
+Why hooks and not instructions: an agent told to use a memory system it did not come with will often
+argue for its own. A hook is configuration, so there is nothing to argue with.
+
+The Codex desktop app ignores the memories setting in `config.toml`; turn memories off in its
+Settings, under Personalization.
+
 ## Multi-machine mode
 
 A second mode exists where one host runs `tools/brain-server.mjs` and other machines reach it over a

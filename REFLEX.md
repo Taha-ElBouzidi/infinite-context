@@ -13,7 +13,9 @@ Before starting any task, recall first, then decide:
    Never preload every index, and never assume you remember it.
 3. **Read** only what matched.
 4. **Decide,** now informed. If nothing matched, say so plainly rather than guessing.
-5. **Write back** anything durable you learned, one fact per file under `memory/`.
+5. **Write back** anything durable you learned, one fact per file under `memory/`, then save it in
+   the background: `node tools/save-brain.mjs "message"` on the host, `brain-client.mjs write` elsewhere.
+   Brain work never blocks a conversation (The owner, 2026-09-17).
 
 Skipping straight to step 4 is the single most common failure mode. Recall is cheap,
 being confidently wrong from stale memory is not.

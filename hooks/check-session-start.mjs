@@ -40,6 +40,26 @@ if (!isPluginCopy(HERE) && isBrainRepo(HERE) && !isBrainRepo(marked)) {
 
 const BRAIN = [process.env.HAVOK_BRAIN, marked, HERE].find(isBrainRepo) || HERE;
 
+// A MACHINE WITH NO MEMORIES ON DISK IS THE NORMAL CASE NOW, NOT A BROKEN ONE.
+//
+// The owner, 2026-09-21 (feedback_no_local_brain_copy_server_only): "local recall, and local brain copy
+// is not an option, if claude is on that means it has an internet connection so it can access the
+// brain". One brain, on the server. So memory/ is empty there by design, and every git-shaped and
+// verify-shaped check below was reporting that design as a fault: four warnings at every session
+// start of a healthy machine, which teaches its agents to skip the banner, and then the one banner
+// that matters is skipped too (measured on PC-MA1-641, 2026-09-22).
+//
+// Counted from the DISK rather than read from a marker or a DISABLED- remote, because the rule
+// applies to any machine holding no memories however it got that way, and because the remote lies:
+// on PC-MA1-641 origin pointed at a migration bundle, so the git block below would have cheerfully
+// restored memory/MEMORY.md, index/ and MANIFEST.md, putting the brain back on a company laptop at
+// every session start.
+const memDir = join(BRAIN, 'memory');
+let localMemories = 0;
+try { localMemories = readdirSync(memDir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md').length; }
+catch { localMemories = 0; }
+const noLocalBrain = localMemories === 0;
+
 const LF = String.fromCharCode(10);
 function runIn(cwd, cmd, ms) {
   try {
@@ -175,7 +195,7 @@ try {
     if (!running) { try { unlinkSync(alive); } catch {} }
   }
   if (!running && existsSync(server)) {
-    if (!existsSync(join(BRAIN, 'node_modules', '@xenova', 'transformers'))) {
+    if (!noLocalBrain && !existsSync(join(BRAIN, 'node_modules', '@xenova', 'transformers'))) {
       notes.push('Semantic recall is unavailable on this machine: run npm install in ' + BRAIN.split(String.fromCharCode(92)).join('/') + ' to enable it. Recall falls back to keyword only until then.');
     } else {
       const child = spawn(process.execPath, [server], { detached: true, stdio: 'ignore', cwd: BRAIN });
@@ -229,6 +249,40 @@ try {
 // (a laptop client, 2026-09-06: the old count said 0 readable while brain-client fetched a secret three
 // times in a row, and every a laptop client session was told to run an onboarding that no longer applies).
 // The token goes in a curl config on stdin, never in argv. /vault/list carries names, never values.
+// One GET against the brain server, for the machines that hold nothing locally. Same shape as
+// vaultProbe: the token goes in a curl config on stdin, never argv, and the pinned certificate
+// rather than --insecure. It carries the MagicDNS name for SNI while the socket goes to the tailnet
+// IP, because the 2023 curl in System32 refuses a certificate matched on an IP SAN and fails with
+// exit 60 (reference_curl_schannel_ip_cert_mismatch). Returns '' on any failure: the caller decides
+// what a silent server means, and session start is never broken over it.
+function serverGet(brain, path) {
+  let url = (process.env.HAVOK_SERVER_URL || '').replace(/[/]$/, '');
+  let magic = '';
+  try {
+    const ep = JSON.parse(readFileSync(join(brain, 'server-endpoint.json'), 'utf8'));
+    if (!url) url = String(ep.url || '').replace(/[/]$/, '');
+    magic = ((ep.tailnet || {}).magicdns) || '';
+  } catch { /* no endpoint file, fall through to the local default */ }
+  if (!url) url = 'https://127.0.0.1:8443';
+  let token = (process.env.HAVOK_SERVER_TOKEN || '').trim();
+  if (!token) { try { token = readFileSync(resolve(homedir(), '.claude', 'havok-server-token'), 'utf8').trim(); } catch { token = ''; } }
+  if (!token) return '';
+  const host = (url.match(/^https?:\/\/([^:/]+)(?::(\d+))?/) || []);
+  const byName = Boolean(magic && host[1] && /^[0-9.]+$/.test(host[1]));
+  const cert = join(brain, 'server-cert.pem');
+  const conf = ['header = "Authorization: Bearer ' + token + '"',
+    'url = "' + (byName ? 'https://' + magic + (host[2] ? ':' + host[2] : '') : url) + path + '"']
+    .concat(byName ? ['connect-to = "' + magic + ':' + host[2] + ':' + host[1] + ':' + host[2] + '"'] : [])
+    .concat(existsSync(cert) ? ['cacert = "' + cert.split(String.fromCharCode(92)).join('/') + '"'] : [])
+    .concat(['silent', 'fail', 'connect-timeout = 3', 'max-time = 15']);
+  try {
+    return execFileSync('curl', ['-K', '-'], {
+      input: conf.join(LF) + LF, encoding: 'utf8', timeout: 18000, windowsHide: true,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+  } catch { return ''; }
+}
+
 function vaultProbe(brain) {
   let url = (process.env.HAVOK_SERVER_URL || '').replace(/[/]$/, '');
   if (!url) { try { url = JSON.parse(readFileSync(join(brain, 'server-endpoint.json'), 'utf8')).url || ''; } catch { url = ''; } }
@@ -327,7 +381,7 @@ try {
       }
     }
   } catch { /* no registry or no requests, nothing to say */ }
-  if (!existsSync(join(BRAIN, 'node_modules', '@xenova', 'transformers'))) {
+  if (!noLocalBrain && !existsSync(join(BRAIN, 'node_modules', '@xenova', 'transformers'))) {
     notes.push('Semantic recall is OFF on this machine: run npm install in ' + BRAIN.split(String.fromCharCode(92)).join('/')
       + '. Recall works on keywords alone until then, which misses anything phrased differently from the memory.');
   }
@@ -344,10 +398,14 @@ try {
 // restore generated files and do not pull: the restore was undoing the index the per-turn hook had
 // just repaired from the server, at every session start, for a pull that could never happen
 // (found by the the client company agent, 2026-09-07).
-const pushUrl = tryRun('git remote get-url --push origin', 5000);
-const serverOnly = pushUrl.ok && pushUrl.out.trim().startsWith('DISABLED-');
-const remoteReachable = serverOnly ? tryRun('git ls-remote --exit-code -q origin HEAD', 10000).ok : true;
-let beforeRev = tryRun('git rev-parse HEAD', 5000);
+// On a machine that holds no memories, git is not consulted AT ALL: not for the remote, not to
+// restore generated files, not to pull. There is nothing here for git to keep current, and the one
+// thing it would do is put a copy of the brain back on the disk.
+const pushUrl = noLocalBrain ? { ok: false, out: '' } : tryRun('git remote get-url --push origin', 5000);
+const serverOnly = noLocalBrain || (pushUrl.ok && pushUrl.out.trim().startsWith('DISABLED-'));
+const remoteReachable = noLocalBrain ? false
+  : (serverOnly ? tryRun('git ls-remote --exit-code -q origin HEAD', 10000).ok : true);
+let beforeRev = noLocalBrain ? { ok: false, out: '' } : tryRun('git rev-parse HEAD', 5000);
 let unwedge = { ok: true, out: '' };
 let pull = { ok: false, out: '', err: 'GitHub is not reachable from this machine', stderr: '' };
 if (remoteReachable) {
@@ -420,7 +478,14 @@ const blockedFiles = keptFiles.length ? keptFiles : gitFiles;
 const offline = !remoteReachable || /fetch failed/.test(unwedgeSummary) || /unable to access|Could not read from remote|Could not resolve|Connection refused|timed out|Network is unreachable/.test(pull.stderr || '');
 const unwedgeNote = unwedge.ok ? '' : ' Unwedge did not run on this machine (tools older than the fix, or node failed); pull it once by hand.';
 let syncLine;
-if (pull.ok) {
+if (noLocalBrain) {
+  // The only thing that can be missing here is the the host, so that is the only thing this line
+  // talks about. It stays loud when the server is silent, because then the session really is
+  // working blind and has to say so rather than answer from nothing.
+  syncLine = serverAnswered
+    ? 'Server-only machine: no memories on disk, which is the designed state. The brain server answered, so the tiers below came from it and recall reads it every turn. Git is not used here and nothing is stale.'
+    : 'WARNING: THE BRAIN SERVER DID NOT ANSWER and this machine keeps no memories of its own, so you have NO recall this session. Say so in your first reply and do not answer from anything local. Check Tailscale, then: node tools/brain-client.mjs status';
+} else if (pull.ok) {
   const touched = /moved [1-9]|restored [1-9]/.test(unwedgeSummary);
   syncLine = 'Brain synced (git pull ok).' + (touched ? ' Unwedge first: ' + unwedgeSummary + '.' : '') + (pushLine ? ' ' + pushLine : '');
 } else if (blockedFiles.length) {
@@ -439,7 +504,7 @@ if (pull.ok) {
 // carried by git, so a machine that pulls the brain would get hooks/git/pre-commit as an
 // inert file and commit straight past the gate. Setting it here means every machine arms
 // itself on its next session with no manual step. Idempotent and silent when already set.
-const hp = tryRun('git config --get core.hooksPath', 5000);
+const hp = noLocalBrain ? { ok: true, out: 'hooks/git' } : tryRun('git config --get core.hooksPath', 5000);
 if (!hp.ok || hp.out !== 'hooks/git') {
   const set = tryRun('git config core.hooksPath hooks/git', 5000);
   if (set.ok) notes.push('Armed the brain git pre-commit gate on this machine (core.hooksPath).');
@@ -495,10 +560,13 @@ try {
 // can be pasted into every session on every machine. That makes the brain the actual
 // working memory of every conversation rather than a repo sitting next to one.
 // Tier 2 and 3 stay on demand, which is what keeps this affordable.
-// Per-tier size caps. The manifest gets a far larger one on purpose: it grows linearly with
-// the number of memories, and silently truncating it would drop real memories out of the
-// agent's awareness with no signal. That is precisely the blind spot this whole tier exists
-// to remove, so it is better to spend the tokens than to hide entries.
+// Per-tier size caps. Tier 1.5 used to be MANIFEST.md at an 80,000 character cap, on the argument
+// that truncating it would hide memories with no signal. Measured on 2026-09-21, that argument had
+// already lost: the manifest was 187 KB, so 57 percent of it was cut and roughly 250 memories were
+// invisible while the injected text told the session it was looking at everything. The owner, 2026-09-22,
+// "do this", on dropping it for recall plus a hot list.
+// index/HOT.md is small by construction and its own first line says it is not the whole brain, so
+// no cap it can hit recreates that blind spot.
 function readTier(rel, cap) {
   try {
     const body = readFileSync(resolve(BRAIN, rel), 'utf8').replace(/\r\n/g, '\n').trim();
@@ -511,37 +579,73 @@ function readTier(rel, cap) {
 }
 
 const reflex = readTier('REFLEX.md', 16000);
-const router = readTier('memory/MEMORY.md', 16000);
-const manifest = readTier('MANIFEST.md', 80000);
+let router = readTier('memory/MEMORY.md', 16000);
+let hot = readTier('index/HOT.md', 16000);
+
+// Where there are no local files, the tiers are not missing, they are somewhere else. Fetch the
+// router and HOT from the same server recall already reads, and never write them to disk: holding
+// no copy is the whole point. REFLEX.md needs no fetch, it arrives with the code mirror.
+if (noLocalBrain) {
+  if (!router) {
+    try { router = (JSON.parse(serverGet(BRAIN, '/memory/MEMORY')).content || '').trim().slice(0, 16000) || null; }
+    catch { router = null; }
+  }
+  if (!hot) hot = (serverGet(BRAIN, '/index/HOT.md') || '').trim().slice(0, 16000) || null;
+}
 
 const parts = [
   'HAVOK BRAIN: ' + syncLine + ' ' + prLine + ' Enforcement hooks (no em dash, no emoji, secret scan) are active via the havok-brain plugin.',
 ];
 if (notes.length) parts.push(notes.join('\n'));
 
-if (reflex || router || manifest) {
+if (reflex || router || hot) {
   parts.push(
     '',
     'The brain below IS your memory. It is injected in full, so do not re-read these files.',
     '',
-    'RECALL IS NOT OPTIONAL AND IT IS NOT A SEARCH. The manifest lists everything the brain',
-    'knows. Before you answer or act, scan it against the task in front of you. If a line is',
-    'relevant, open `' + BRAIN.replace(/\\/g, '/') + '/memory/<slug>.md` and read it FIRST.',
+    'RECALL IS NOT OPTIONAL AND IT IS NOT A SEARCH. Every turn, the brain searches ALL of its',
+    'memories against what was just said and names the ones that match. OPEN them, ' + (noLocalBrain
+      ? 'with `node tools/brain-client.mjs read <slug>`, before you answer or act.'
+      : 'at'),
+    noLocalBrain ? '' : '`' + BRAIN.replace(/\\/g, '/') + '/memory/<slug>.md`, before you answer or act.',
     'A description tells you whether to open a file, never what the file says, so never answer',
-    'from the manifest line alone.',
+    'from the one line alone.',
+    '',
+    'The list below is NOT the whole brain and does not need to be. It is what this fleet has been',
+    'using and what changed this week, so you know what you are walking into. To look by hand: ' + (noLocalBrain
+      ? 'ask the server, nothing is on this disk.'
+      : 'MANIFEST.md holds every slug on disk, index/<type>.md holds one type, grep -ril finds a term.'),
     '',
     'The most common failure is skipping this because you believe you already know the answer.',
     'You cannot know what the brain corrected, superseded, or decided since you last looked.',
-    'When you learn something durable, write it back as a memory file under memory/.',
+    'When you learn something durable, write it back ' + (noLocalBrain
+      ? 'with `node tools/brain-client.mjs write <slug> --file <path>`. Never create a file under'
+        + ' memory/ on this machine: the mirror treats anything the server does not list as deleted.'
+      : 'as a memory file under memory/.'),
   );
   // A half-loaded brain is more dangerous than an unloaded one: the session looks equipped
   // and quietly is not. Name the missing tier rather than just leaving a gap in the payload.
+  //
+  // But NEVER tell a machine to rebuild an index it must not hold. Most machines now keep no local
+  // copy of the brain at all (The owner, 2026-09-22: local recall and a local brain copy are not an
+  // option, the server is more secure and more synced), so memory/ and index/ are absent there by
+  // design and these two lines fire on every session. Telling that machine to run build-index tells
+  // it to recreate 529 memory files on a company-issued laptop, which is precisely what was deleted.
+  // A noisy banner is survivable. A noisy banner carrying a harmful remedy is not. Caught by the
+  // the client company session within the hour, on its own machine, which is the only place it shows.
+  // Same question, one answer: noLocalBrain counts the memory FILES, while existsSync only saw the
+  // directory, so an empty leftover memory/ made this line promise a rebuild on a machine that must
+  // not hold one. When the tiers were fetched from the server these two notes do not fire at all.
+  const LOCAL_MEMORIES = !noLocalBrain;
+  const REMEDY = LOCAL_MEMORIES
+    ? ' Rebuild it here: node tools/build-index.mjs'
+    : ' This machine deliberately keeps no local copy of the brain, so this is EXPECTED and you must NOT create one. Recall comes from the server on every turn regardless.';
   if (!reflex) parts.push('', 'WARNING: REFLEX.md is missing or unreadable, so the always-on hard rules are NOT loaded. Treat nothing below as complete and fix the brain at ' + BRAIN.replace(/\\/g, '/'));
-  if (!router) parts.push('', 'WARNING: memory/MEMORY.md is missing or unreadable, so you have no router. Find memories with grep until it is rebuilt: node tools/build-index.mjs');
-  if (!manifest) parts.push('', 'WARNING: MANIFEST.md is missing, so you CANNOT see what the brain knows and will silently fail to recall. Rebuild it: node tools/build-index.mjs');
+  if (!router) parts.push('', 'NOTE: memory/MEMORY.md is not readable here, so you have no router.' + REMEDY);
+  if (!hot) parts.push('', 'NOTE: index/HOT.md is not readable here, so you start with no sense of what is in play. Per-prompt recall still reaches every memory, so this is not a broken brain.' + REMEDY);
   if (reflex) parts.push('', '===== BRAIN TIER 0: REFLEX (always applies) =====', reflex);
   if (router) parts.push('', '===== BRAIN TIER 1: MEMORY ROUTER =====', router);
-  if (manifest) parts.push('', '===== BRAIN TIER 1.5: MANIFEST, everything the brain knows =====', manifest);
+  if (hot) parts.push('', '===== BRAIN TIER 1.5: HOT, what is in play right now (NOT everything) =====', hot);
 } else {
   parts.push('WARNING: could not read REFLEX.md or memory/MEMORY.md. The brain is NOT loaded into this session. Read them manually from ' + BRAIN.replace(/\\/g, '/'));
 }

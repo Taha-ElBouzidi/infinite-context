@@ -32,15 +32,16 @@
 //       node tools/brain-server.mjs --public   bind 0.0.0.0, for use behind a tunnel
 
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join, basename } from 'node:path';
 import { homedir, networkInterfaces, hostname } from 'node:os';
 import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile } from 'node:child_process';
 // The SAME tokenizer the hook uses, imported rather than reimplemented. Two copies of a tokenizer
 // is two sparse rankings that agree until the day someone edits one of them.
 import { terms as qterms } from './tokenize.mjs';
+import { watchTailnet } from './tailnet-watch.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.HAVOK_SERVER_PORT || 8478);
@@ -157,6 +158,56 @@ function rateLimited(ip) {
   return recent.length > 120;
 }
 
+// THE BACKGROUND SAVE QUEUE for POST /memory. One run at a time, and every write that arrives while a
+// run is going is folded into the next one: five memories written together cost one reindex and one
+// commit, not five. Async execFile, so the server keeps answering recall while git and the indexer
+// work. Push failure is still not a write failure (the memory is live on this disk, git is the
+// backup), and the reason is still audited, because the pre-commit gate refusing a write is
+// information someone needs.
+const saveQueue = new Map();
+let saveRunning = false;
+const runAsync = (cmd, args, timeout) => new Promise((resolve, reject) => {
+  execFile(cmd, args, { cwd: BRAIN, timeout, windowsHide: true, maxBuffer: 16 << 20 }, (e, stdout, stderr) => (
+    e ? reject(Object.assign(e, { stdout, stderr })) : resolve(stdout)));
+});
+function queueBrainSave(slug, existed, callerName, ip) {
+  const prev = saveQueue.get(slug);
+  saveQueue.set(slug, { existed: prev ? prev.existed : existed, callerName, ip });
+  if (!saveRunning) drainBrainSaves();
+}
+async function drainBrainSaves() {
+  saveRunning = true;
+  try {
+    while (saveQueue.size) {
+      const batch = [...saveQueue.entries()];
+      saveQueue.clear();
+      try { await runAsync(process.execPath, [join(BRAIN, 'tools', 'build-index.mjs')], 120000); }
+      catch (e) { audit('INDEX-FAIL ' + String(e.message).slice(0, 120)); }
+      // Test probes do not belong in the brain's permanent history (tools/stress-test.mjs writes
+      // five at once). Written and reindexed like any other, never committed.
+      const keep = batch.filter(([s]) => !EPHEMERAL_SLUG.test(s));
+      for (const [s, m] of batch) if (EPHEMERAL_SLUG.test(s)) audit('MEMORY-WRITE ' + m.ip + ' ' + m.callerName + ' ' + s + ' PUSH-FAILED: ephemeral test slug, deliberately not committed');
+      if (!keep.length) continue;
+      let pushError = null;
+      try {
+        await runAsync('git', ['-C', BRAIN, 'add', 'memory/', 'index/', 'MANIFEST.md'], 30000);
+        const who = [...new Set(keep.map(([, m]) => m.callerName))].join(', ');
+        const message = keep.length === 1
+          ? (keep[0][1].existed ? 'memory: update ' : 'memory: ') + keep[0][0] + ' (via ' + who + ')'
+          : 'memory: ' + keep.map(([s]) => s).join(', ') + ' (via ' + who + ')';
+        await runAsync('git', ['-C', BRAIN, 'commit', '-m', message], 180000);
+        await runAsync('git', ['-C', BRAIN, 'push', '-q', 'origin', 'HEAD'], 120000);
+      } catch (ge) {
+        const msg = String((ge && (ge.stderr || ge.stdout || ge.message)) || '');
+        pushError = /VERIFY FAILED/i.test(msg) ? 'the pre-commit gate refused it: run node tools/verify.mjs'
+          : /nothing to commit/i.test(msg) ? 'nothing to commit (content identical)'
+            : msg.replace(/\s+/g, ' ').slice(0, 160) || 'git failed with no output';
+      }
+      for (const [s, m] of keep) audit('MEMORY-WRITE ' + m.ip + ' ' + m.callerName + ' ' + s + (m.existed ? ' update' : ' new') + (pushError ? ' PUSH-FAILED: ' + pushError : ''));
+    }
+  } finally { saveRunning = false; }
+}
+
 function audit(line) {
   try { appendFileSync(ACCESS_LOG, new Date().toISOString() + ' ' + line + '\n'); } catch { /* logging must not break serving */ }
 }
@@ -264,17 +315,22 @@ const RRF_K = 60;
 const SPARSE_MIN = Number(process.env.RECALL_MIN || 0.10);
 const PER_CHANNEL = 20;
 
-async function recall(prompt, queries, limit) {
+async function recall(prompt, queries, limit, bodyChars = 0) {
   const { kw, emb } = loadIndexes();
+  let qEmb = null;
+  try { qEmb = JSON.parse(readFileSync(join(BRAIN, 'index', 'question-embeddings.json'), 'utf8')); }
+  catch { /* no questions written yet, which is the state every brain starts in */ }
 
   // DENSE, max-pooled across chunks rather than averaged. Taking the best chunk is the entire
   // point; a mean reintroduces exactly the dilution that chunking was added to remove.
   const e = await getEmbedder();
   const best = new Float64Array(emb.slugs.length).fill(-Infinity);
+  const queryVectors = [];
   let embedded = 0;
   for (const q of queries) {
     const o = await e(String(q).slice(0, 4000), { pooling: 'mean', normalize: true });
     const qv = o.data;
+    queryVectors.push(qv);
     embedded++;
     for (let i = 0; i < emb.slugs.length; i++) {
       const v = emb.vectors[i];
@@ -283,8 +339,30 @@ async function recall(prompt, queries, limit) {
       if (dot > best[i]) best[i] = dot;
     }
   }
+  /* THE QUESTIONS A MEMORY ANSWERS ARE SCORED BESIDE ITS DESCRIPTION, and a memory keeps the better
+     of the two. Measured 2026-09-21: "I need to know who did what action" scores 0.144 against the
+     description of the memory that answers it and 0.523 against the question itself; "stop writing
+     so much" 0.216 against 0.622. A description says what a memory is about, which is not what
+     anyone types. Max, never a mean: averaging the two is the dilution this exists to remove.
+     The file is optional, so a brain with no questions written behaves exactly as before. */
+  const qBest = new Map();
+  if (qEmb && qEmb.vectors && qEmb.vectors.length) {
+    // The query vectors are already computed above. Embedding each query a second time here cost a
+    // measured 42 ms a prompt for an identical vector, which is the kind of waste that looks like
+    // the feature being expensive.
+    for (const qv of queryVectors) {
+      for (let i = 0; i < qEmb.vectors.length; i++) {
+        const v = qEmb.vectors[i];
+        let dot = 0;
+        for (let k = 0; k < v.length; k++) dot += qv[k] * v[k];
+        const slug = qEmb.slugs[i];
+        if (dot > (qBest.get(slug) ?? -Infinity)) qBest.set(slug, dot);
+      }
+    }
+  }
   const denseRanked = embedded
-    ? emb.slugs.map((s, i) => [s, best[i]]).sort((a, b) => b[1] - a[1]).slice(0, PER_CHANNEL)
+    ? emb.slugs.map((s, i) => [s, Math.max(best[i], qBest.get(s) ?? -Infinity)])
+      .sort((a, b) => b[1] - a[1]).slice(0, PER_CHANNEL)
     : [];
 
   // SPARSE reads the FULL prompt, capped, never a head slice. The hook learned this the hard way:
@@ -312,11 +390,31 @@ async function recall(prompt, queries, limit) {
   return [...fused.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
-    .map(([slug]) => ({
-      slug,
-      how: bySparse.has(slug) && byDense.has(slug) ? 'both' : byDense.has(slug) ? 'meaning' : 'keyword',
-      description: kw.descriptions[slug] || '',
-    }));
+    .map(([slug]) => {
+      const hit = {
+        slug,
+        how: bySparse.has(slug) && byDense.has(slug) ? 'both' : byDense.has(slug) ? 'meaning' : 'keyword',
+        description: kw.descriptions[slug] || '',
+      };
+      /* THE BODY TRAVELS WITH THE HIT WHEN THE CALLER ASKS. The owner, 2026-09-21: "local recall, and
+         local brain copy is not an option." With no copy anywhere, a machine that gets slugs and
+         descriptions has to ask again for the thing it actually needs, 216 ms per memory measured,
+         and an agent under time pressure answers from the description instead. That is the single
+         failure the recall system exists to prevent, so the body comes down with the ranking.
+         Frontmatter is stripped: name and description are already in the hit, and repeating them
+         would spend a fifth of the budget saying what was just said. */
+      if (bodyChars > 0) {
+        try {
+          const raw = readFileSync(join(BRAIN, 'memory', slug + '.md'), 'utf8').replace(/\r\n/g, '\n');
+          const afterFm = raw.startsWith('---') ? raw.slice(Math.max(raw.indexOf('\n---', 3) + 4, 0)) : raw;
+          const body = afterFm.trim();
+          hit.chars = body.length;
+          hit.body = body.slice(0, bodyChars);
+          hit.truncated = body.length > bodyChars;
+        } catch { /* a hit whose file vanished mid-request is still a useful slug */ }
+      }
+      return hit;
+    });
 }
 
 const handler = async (req, res) => {
@@ -474,7 +572,11 @@ const handler = async (req, res) => {
         // installs the plugin from its local checkout, and claude plugin update compares versions,
         // so without these a version bump never reaches the one laptop that cannot use GitHub.
         const list = ['server-cert.pem', 'server-endpoint.json', 'CLAUDE.md', 'REFLEX.md',
-          'METHODOLOGIES.md', 'GOVERNANCE.md', '.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json'];
+          'METHODOLOGIES.md', 'GOVERNANCE.md', '.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', '.mcp.json',
+          // The standing rules every agy sub-agent loads through ~/.gemini/GEMINI.md, on every
+          // machine (2026-09-25). A .md in tools/ fails the extension filter below; a laptop client found it
+          // never arrived. Named one by one so no other markdown in tools/ is published by accident.
+          'tools/subagent-rules.md', 'tools/agent-rules.md'];
         for (const d of ['tools', 'hooks']) {
           let names = [];
           try { names = readdirSync(join(BRAIN, d)); } catch { continue; }
@@ -596,7 +698,10 @@ const handler = async (req, res) => {
       return res.end(body);
     }
 
-    if (path.startsWith('/memory/')) {
+    // GET, EXPLICITLY. Without the method check this matched a DELETE to the same path, answered
+    // it with the memory's own content and a 200, and the delete route further down was never
+    // reached. The client read that as "REFUSED: unknown" and nothing was removed.
+    if (path.startsWith('/memory/') && req.method === 'GET') {
       const slug = basename(decodeURIComponent(path.slice('/memory/'.length))).replace(/\.md$/, '');
       const f = join(BRAIN, 'memory', slug + '.md');
       if (!existsSync(f)) return json(res, 404, { error: 'no such memory' });
@@ -717,42 +822,113 @@ const handler = async (req, res) => {
       const existed = existsSync(file);
       try {
         writeFileSync(file, fm, 'utf8');
-        // Reindex INLINE. Measured 201ms with no change, about 2.5s when vectors rebuild. A write
-        // that returns before the index catches up would report success on a memory nobody can
-        // find yet, which is the exact failure this whole system was fixed for yesterday.
-        execFileSync(process.execPath, [join(BRAIN, 'tools', 'build-index.mjs')], { cwd: BRAIN, timeout: 120000, stdio: 'ignore' });
-        // Commit and push. Push failure is NOT a write failure: the memory is on the server, which
-        // is now the source of truth, and git is the backup. Report it rather than rolling back.
-        // Say WHY a push failed, not just that it did. The first version returned pushed:false with
-        // no reason, and the actual cause was the pre-commit gate refusing the write, which is
-        // information the caller needs and cannot guess. A memory that lands on the server but
-        // never reaches git is only as safe as this disk.
-        let pushed = true;
-        let pushError = null;
-        // Test probes do not belong in the brain's permanent history. tools/stress-test.mjs writes
-        // five memories at once to prove the index survives a race, and each one was landing as a
-        // real commit pushed to GitHub, then a removal commit: junk in the backup that every other
-        // machine pulls. Validation, the write and the reindex are all still exercised, which is
-        // what that test is actually measuring. Only the git step is skipped, and the audit says so.
-        if (EPHEMERAL_SLUG.test(slug)) { pushed = false; pushError = 'ephemeral test slug, deliberately not committed'; }
-        else try {
-          execFileSync('git', ['-C', BRAIN, 'add', 'memory/', 'index/', 'MANIFEST.md'], { timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
-          // PIPE, not ignore. The pre-commit gate writes its refusal to stdout, and with stdio ignore the
-            // reason is thrown away, so every failure looked identical and unexplainable.
-            execFileSync('git', ['-C', BRAIN, 'commit', '-m', (existed ? 'memory: update ' : 'memory: ') + slug + ' (via ' + caller.name + ')'], { timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] });
-          execFileSync('git', ['-C', BRAIN, 'push', '-q', 'origin', 'HEAD'], { timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] });
-        } catch (ge) {
-          pushed = false;
-          const msg = String((ge && (ge.stderr || ge.stdout || ge.message)) || '');
-          pushError = /VERIFY FAILED/i.test(msg) ? 'the pre-commit gate refused it: run node tools/verify.mjs'
-            : /nothing to commit/i.test(msg) ? 'nothing to commit (content identical)'
-              : String(msg).replace(/\s+/g, ' ').slice(0, 160) || 'git failed with no output';
-        }
-        audit('MEMORY-WRITE ' + ip + ' ' + caller.name + ' ' + slug + (existed ? ' update' : ' new') + (pushed ? '' : ' PUSH-FAILED: ' + pushError));
-        return json(res, 200, { ok: true, slug, updated: existed, pushed, pushError, v: indexVersion().version });
+        // THE WRITER GETS ITS ANSWER NOW, THE INDEX AND THE BACKUP FOLLOW. The owner, 2026-09-17: "that call
+        // should be in the back end, no need to block us, and this should be the standard for all
+        // agent brain functionalities, it shouldn't affect the flow of the conversation".
+        //
+        // Reindex, commit and push used to run here with execFileSync. That blocked the caller AND
+        // froze this whole process, so every memory written from any machine stalled every other
+        // machine's recall: the analyzer reported "brain server did not answer /health" at 10:06 and
+        // 10:31 that day, each right after the locked-down client machine wrote a memory. Validation and the
+        // file write stay above, synchronous, because a bad write must still be refused while the
+        // author is there. What is queued can no longer fail in a way the author could fix.
+        // The cost, accepted: recall can miss a brand new memory for the few seconds indexing takes.
+        queueBrainSave(slug, existed, caller.name, ip);
+        return json(res, 200, { ok: true, slug, updated: existed, queued: true, pushed: null, v: indexVersion().version });
       } catch (e) {
         audit('MEMORY-WRITE-FAIL ' + ip + ' ' + caller.name + ' ' + slug + ' ' + String(e.message).slice(0, 80));
         return json(res, 500, { error: 'write failed', detail: String(e.message).slice(0, 200) });
+      }
+    }
+
+    /* ---- DELETE A MEMORY -----------------------------------------------------------------
+       The owner, 2026-09-21: "we need to allow memories to be deleted, because the git memory and the
+       local brain memory keep breaking the brain recall."
+       Until now nothing anywhere could remove one. A memory could be corrected or superseded and
+       never withdrawn, so a fact that turned out to be wrong stayed in recall forever and the only
+       remedy was editing it into a note saying it was wrong.
+
+       NOTHING IS UNLINKED. The file moves to deleted/ at the brain root with a line saying who
+       removed it, when and why, so any delete can be undone by moving it back. The graveyard is
+       committed with everything else: a memory that mattered enough to write is worth keeping the
+       body of.
+
+       INBOUND LINKS ARE CHECKED FIRST, because a wikilink pointing at a memory that no longer
+       exists is a broken edge, and a broken edge REFUSES every later write from every machine.
+       Deleting carelessly would wedge the whole brain, so the refusal names the files to fix. */
+    if (path.startsWith('/memory/') && req.method === 'DELETE') {
+      const slug = basename(decodeURIComponent(path.slice('/memory/'.length))).replace(/\.md$/, '');
+      if (!/^[a-z][a-z0-9_]{2,80}$/.test(slug)) return json(res, 400, { error: 'bad slug' });
+      const file = join(BRAIN, 'memory', slug + '.md');
+      if (!existsSync(file)) return json(res, 404, { error: 'no such memory', detail: slug + ' is not on the server.' });
+
+      let raw = '';
+      for await (const chunk of req) { raw += chunk; if (raw.length > 20_000) { req.destroy(); return; } }
+      let body = {};
+      try { body = JSON.parse(raw || '{}'); } catch { /* a reason is optional in shape, not in policy */ }
+      const why = String(body.why || '').trim();
+      if (why.length < 10) {
+        return json(res, 400, { error: 'no reason', detail: 'say why in at least ten characters. A deletion with no reason is indistinguishable from an accident.' });
+      }
+
+      // Who points at it. The name form counts as well as the filename form, the same way the
+      // write path resolves links, or this would refuse deletions over links that are not real.
+      const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
+      const ownNames = new Set([norm(slug)]);
+      try {
+        const head = readFileSync(file, 'utf8').slice(0, 600);
+        const nm = /^name:\s*(.+)$/m.exec(head);
+        if (nm) ownNames.add(norm(nm[1].replace(/["']/g, '')));
+      } catch { /* read failure is handled below */ }
+      const pointing = [];
+      try {
+        for (const f of readdirSync(join(BRAIN, 'memory'))) {
+          if (!f.endsWith('.md') || f === 'MEMORY.md' || f === slug + '.md') continue;
+          const txt = readFileSync(join(BRAIN, 'memory', f), 'utf8');
+          const links = [...txt.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => norm(m[1]));
+          if (links.some((l) => ownNames.has(l))) pointing.push(f.slice(0, -3));
+        }
+      } catch { /* handled by the outer catch */ }
+      if (pointing.length && !body.force) {
+        return json(res, 409, {
+          error: 'still linked',
+          detail: pointing.length + ' memories link to ' + slug + ': ' + pointing.slice(0, 12).join(', ')
+            + '. A link to a memory that does not exist is a broken edge and it blocks writes for every'
+            + ' machine. Remove those links first, or repeat with force to have them left as they are.',
+          linked: pointing,
+        });
+      }
+
+      /* THE BACKUP IS OUT OF REACH, ON PURPOSE. The owner, 2026-09-21: "it is good that we keep a non
+         accessable back up of the deleted memory in case the agent deleted something it shouldn't
+         have." So the body does not go to a folder in the repo, where it would be committed, greppable
+         and one Read away from any agent. It goes OUTSIDE the brain, next to the machine's own keys,
+         encrypted to this machine's age public key.
+         What that does and does not buy, plainly: it is not in git, not in the index, not in recall,
+         not served by any route, and unreadable on any other machine even with the file in hand.
+         It does NOT stop an agent with a shell ON THIS MACHINE from running age against the key, and
+         nothing stored here could. Recovery is deliberate: node tools/graveyard.mjs restore <slug>. */
+      try {
+        const grave = join(CONFIG_DIR, 'brain-graveyard');
+        mkdirSync(grave, { recursive: true });
+        const stamp = new Date().toISOString();
+        const note = '<!-- deleted ' + stamp + ' by ' + caller.name + ' from ' + ip + ': ' + why.slice(0, 300) + ' -->\n';
+        const plain = note + readFileSync(file, 'utf8');
+        // The registry names its own host, which is the machine holding the private half. Reading
+        // the OS hostname instead would break the day the box is renamed.
+        const reg = JSON.parse(readFileSync(join(BRAIN, 'vault-recipients.json'), 'utf8')) || {};
+        const pub = ((reg.machines || {})[reg.host] || {}).pubkey;
+        if (!pub) throw new Error('no age recipient for this machine, refusing to delete without a recoverable backup');
+        // STDIN, never argv: the body of a memory is not going on a command line.
+        const sealed = execFileSync('age', ['-r', pub, '-a'], { input: plain, encoding: 'utf8' });
+        writeFileSync(join(grave, slug + '.' + stamp.replace(/[:.]/g, '-') + '.age'), sealed, 'utf8');
+        rmSync(file);
+        audit('MEMORY-DELETE ' + ip + ' ' + caller.name + ' ' + slug + ' :: ' + why.slice(0, 120));
+        queueBrainSave(slug, true, caller.name, ip);
+        return json(res, 200, { ok: true, slug, deleted: true, linked: pointing, queued: true });
+      } catch (e) {
+        audit('MEMORY-DELETE-FAIL ' + ip + ' ' + caller.name + ' ' + slug + ' ' + String(e.message).slice(0, 80));
+        return json(res, 500, { error: 'delete failed', detail: String(e.message).slice(0, 200) });
       }
     }
 
@@ -772,10 +948,14 @@ const handler = async (req, res) => {
         ? rp.queries.filter((t) => typeof t === 'string' && t.trim()).slice(0, 16)
         : [prompt.slice(0, 4000)];
       const tr = Date.now();
-      const ranked = await recall(prompt, queries, Math.min(Math.max(Number(rp.limit) || 5, 1), 20));
+      // Capped hard at 4000 per memory however much a caller asks for: five hits at the default
+      // 1500 is about 7 KB on the wire and in the agent's context, every turn, on every machine.
+      const bodyChars = rp.bodies === false ? 0
+        : rp.bodies ? Math.min(Math.max(Number(rp.bodyChars) || 1500, 200), 4000) : 0;
+      const ranked = await recall(prompt, queries, Math.min(Math.max(Number(rp.limit) || 5, 1), 20), bodyChars);
       // Counts only. Never the prompt, never the matched slugs.
       audit('RECALL ' + ip + ' q=' + queries.length + ' chars=' + prompt.length
-        + ' hits=' + ranked.length + ' ' + (Date.now() - tr) + 'ms');
+        + ' hits=' + ranked.length + (bodyChars ? ' bodies=' + bodyChars : '') + ' ' + (Date.now() - tr) + 'ms');
       return json(res, 200, { ranked, v: indexVersion().version });
     }
 
@@ -994,13 +1174,15 @@ function tailnetAddresses() {
   return out;
 }
 
-const BIND = ['127.0.0.1', ...tailnetAddresses()];
-if (PUBLIC && BIND.length === 1) {
+if (PUBLIC && tailnetAddresses().length === 0) {
   // --public asked for reachability and there is no tailnet to provide it. Say so loudly rather
   // than silently serving loopback only, which would look like the server is simply down.
-  process.stdout.write('WARNING: --public but no Tailscale address found, serving loopback only' + String.fromCharCode(10));
+  process.stdout.write('WARNING: --public but no Tailscale address found yet, serving loopback only until one appears' + String.fromCharCode(10));
 }
 const TLS_PORT = Number(process.env.HAVOK_SERVER_TLS_PORT || 8443);
+// How often to look for a tailnet address that was absent at startup. Reading the interfaces once
+// is what left the brain loopback-only for every other machine after the 2026-09-16 reboot.
+const TAILNET_POLL_MS = Number(process.env.HAVOK_TAILNET_POLL_MS || 15000);
 
 if (HAVE_TLS) {
   import('node:https').then(({ createServer: createHttps }) => {
@@ -1012,19 +1194,30 @@ if (HAVE_TLS) {
     // machine ends up reachable on only one address. Caught 2026-08-23 by checking the listeners
     // after the change: loopback had silently stopped answering while the tailnet address worked,
     // so this machine fell back to local matching and nothing anywhere said why.
-    for (const addr of BIND) {
+    const listenOn = (addr, onFail) => {
       const tls = createHttps(opts, handler);
       // Two starters race (scheduled task plus session hook) and the loser must exit quietly,
       // otherwise its restart policy fires every minute forever against a healthy server.
       tls.on('error', (e) => {
         const tail = String.fromCharCode(10);
+        // Loopback taken means another brain server is already serving. Exit: the tailnet watcher's
+        // timer would otherwise keep this copy alive forever. Ten of them had piled up by 2026-09-17,
+        // each started by a session-start check whose 2 second probe hit a server frozen by a write.
+        if (e && e.code === 'EADDRINUSE' && addr === '127.0.0.1' && !ALLOW_PLAINTEXT) { process.stdout.write('brain server TLS already listening on ' + addr + ', exiting' + tail); process.exit(0); }
         if (e && e.code === 'EADDRINUSE') { process.stdout.write('brain server TLS already listening on ' + addr + tail); return; }
         process.stdout.write('brain server TLS failed on ' + addr + ': ' + String(e && e.message).slice(0, 120) + tail);
+        if (onFail) onFail(addr);
       });
       tls.listen(TLS_PORT, addr, () => {
         process.stdout.write('brain server TLS on ' + addr + ':' + TLS_PORT + String.fromCharCode(10));
       });
-    }
+    };
+    listenOn('127.0.0.1');
+    const tailnet = watchTailnet({
+      list: tailnetAddresses,
+      intervalMs: TAILNET_POLL_MS,
+      bind: (addr) => listenOn(addr, (a) => tailnet.forget(a)),
+    });
   }).catch(() => { /* no https available: the plaintext listener still serves */ });
 } else {
   process.stdout.write('NO TLS CERT, serving plaintext only. Generate one to encrypt the transport.\n');

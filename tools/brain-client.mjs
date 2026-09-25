@@ -24,6 +24,8 @@ import { execFileSync } from 'node:child_process';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NL = String.fromCharCode(10);
+// Minutes the hook skips the server after a failed call. Must match hooks/pre-turn.mjs DOWN_COOLDOWN_MS.
+const DOWN_COOLDOWN_MIN = 3;
 // Where the server is, DISCOVERED rather than assumed.
 //
 // This hardcoded 127.0.0.1 until 2026-08-22, so on any machine that is not the host it probed
@@ -127,11 +129,18 @@ function call(path, { method = 'GET', body = null, timeoutSec = 20 } = {}) {
     // Forward slashes: a curl config treats a backslash as an escape character.
     if (existsSync(cert)) lines.push('cacert = "' + cert.split('\\').join('/') + '"');
   }
+  // A verb with no body still has to reach the wire, or curl sends a GET.
+  if (!body && method && method !== 'GET') lines.push('request = "' + method + '"');
   let bodyFile = null;
   if (body) {
     bodyFile = join(tmpdir(), 'havok-bc-' + process.pid + '.json');
     writeFileSync(bodyFile, JSON.stringify(body), 'utf8');
-    lines.push('request = "POST"', 'header = "content-type: application/json"',
+    // THE VERB CAME FROM THE CALLER AND WAS THROWN AWAY HERE. Any call carrying a body went out as
+    // a POST whatever `method` said, so the first DELETE ever written arrived as POST /memory/<slug>,
+    // matched no route, and came back "no such route", which reads exactly like a missing feature
+    // rather than a client bug.
+    lines.push('request = "' + (method && method !== 'GET' ? method : 'POST') + '"',
+      'header = "content-type: application/json"',
       'data-binary = "@' + bodyFile.split('\\').join('/') + '"');
   }
   try {
@@ -246,10 +255,11 @@ if (cmd === 'status') {
     const raw = readFileSync(DOWN, 'utf8').trim();
     const m = /^\d+$/.test(raw) ? { at: Number(raw), reason: 'unknown (mark predates reasons)' } : JSON.parse(raw);
     const mins = Math.floor((Date.now() - Number(m.at)) / 60000);
-    const cooled = (Date.now() - Number(m.at)) >= 10 * 60 * 1000;
+    // Same cooldown as hooks/pre-turn.mjs DOWN_COOLDOWN_MS. It was 10 here while the fix said 3.
+    const cooled = (Date.now() - Number(m.at)) >= DOWN_COOLDOWN_MIN * 60 * 1000;
     process.stdout.write('remote embedding: ' + (cooled
       ? 'marked down ' + mins + ' min ago (' + m.reason + '), cooldown lapsed so the next turn retries'
-      : 'SKIPPED, marked down ' + mins + ' min ago (' + m.reason + '), retrying in ' + (10 - mins) + ' min') + '\n');
+      : 'SKIPPED, marked down ' + mins + ' min ago (' + m.reason + '), retrying in ' + (DOWN_COOLDOWN_MIN - mins) + ' min') + '\n');
   } catch {
     process.stdout.write('remote embedding: not marked down\n');
   }
@@ -267,7 +277,7 @@ if (cmd === 'status') {
   try {
     const raw = readFileSync(DOWN, 'utf8').trim();
     const m = /^\d+$/.test(raw) ? { at: Number(raw) } : JSON.parse(raw);
-    markFresh = (Date.now() - Number(m.at)) < 10 * 60 * 1000;
+    markFresh = (Date.now() - Number(m.at)) < DOWN_COOLDOWN_MIN * 60 * 1000;
   } catch { /* no mark */ }
   // THE SERVER IS TRIED FIRST, so report the server first.
   //
@@ -328,8 +338,11 @@ if (cmd === 'status') {
   if (r && r.secrets) {
     for (const s of r.secrets) process.stdout.write(s.name.padEnd(34) + 'updated ' + s.updated + '\n');
   } else {
-    // Server down: the local clone still has the encrypted vault, so listing works offline.
-    process.stderr.write('server unreachable, using the local clone\n');
+    // A recall-scoped token gets 403 here by design. the locked-down client machine, 2026-09-17: calling that "server
+    // unreachable" sent a reader looking for a network fault while the server was answering.
+    process.stderr.write(r && r.error === 'forbidden'
+      ? 'this machine may not list the vault (recall-scoped token, 403, deliberate). Showing the local clone\n'
+      : 'server unreachable, using the local clone\n');
     process.stdout.write(execFileSync(process.execPath, [join(BRAIN, 'tools', 'vault.mjs'), 'list'], { encoding: 'utf8' }));
   }
 
@@ -397,12 +410,52 @@ if (cmd === 'status') {
       + 'The write was validated before it landed, so nothing is half-written. Fix it and run again.' + NL);
     process.exit(1);
   }
-  process.stdout.write((r.updated ? 'updated ' : 'wrote ') + r.slug + ', indexed, index now ' + r.v + NL);
+  process.stdout.write((r.updated ? 'updated ' : 'wrote ') + r.slug + (r.queued
+    ? ' on the server. Indexing and the git backup run there in the background, a few seconds.'
+    : ', indexed, index now ' + r.v) + NL);
   // pushed:false is NOT a failed write. Say so here, or the next agent rolls back a memory that is
   // safely on the source of truth.
   if (r.pushed === false) {
     process.stdout.write('git backup did NOT get it: ' + (r.pushError || 'no reason given') + NL
       + 'The memory IS on the server and is live for every machine. This only means the backup is behind.' + NL);
+  }
+
+} else if (cmd === 'delete') {
+  // A REASON IS REQUIRED, and it is not ceremony: the reason is what tells the next person whether
+  // the memory was wrong, superseded or simply noise, and it is the only thing written beside the
+  // body in the graveyard. Nothing is unlinked on the server, so a mistake is recoverable.
+  const flag = (n) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : null; };
+  const why = flag('--why');
+  if (!arg || !why) {
+    process.stderr.write([
+      'usage: brain-client.mjs delete <slug> --why "it was wrong because ..."',
+      '       add --force only when the memories that link to it are being left alone on purpose',
+      '',
+      'The file moves to deleted/ on the server, it is never unlinked, and the index is rebuilt',
+      'there. Anything still pointing at it is named and the delete is refused, because a link to',
+      'a memory that does not exist blocks writes for every machine.',
+      '',
+    ].join(NL));
+    process.exit(1);
+  }
+  const r = call('/memory/' + encodeURIComponent(arg), {
+    method: 'DELETE', body: { why, force: process.argv.includes('--force') }, timeoutSec: 120,
+  });
+  if (!r) {
+    process.stderr.write('The server did not answer, so NOTHING was deleted. Never delete from your'
+      + ' local clone instead: the server owns the brain and git is only its backup.' + NL);
+    process.exit(1);
+  }
+  if (!r.ok) {
+    process.stderr.write('REFUSED: ' + (r.error || 'unknown') + NL + (r.detail ? String(r.detail) + NL : ''));
+    process.exit(1);
+  }
+  process.stdout.write('deleted ' + r.slug + '. A sealed copy is kept on the brain host, outside the'
+    + ' repo and encrypted to that machine, and only it can open it: node tools/graveyard.mjs restore '
+    + r.slug + NL + 'Reindexing and the git backup run on the server in the background.' + NL);
+  if (r.linked && r.linked.length) {
+    process.stdout.write('WARNING: ' + r.linked.length + ' memories still link to it and were left as they are: '
+      + r.linked.join(', ') + NL + 'Fix them or the next write from any machine is refused.' + NL);
   }
 
 } else if (cmd === 'read') {

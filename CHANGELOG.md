@@ -2,6 +2,26 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.3.0
+
+- **Codex.** `tools/setup-codex.mjs` connects OpenAI Codex (CLI and IDE extension) to the same memory.
+  Codex runs the same `UserPromptSubmit` and `SessionStart` hooks with the same output shape, so
+  `hooks/pre-turn.mjs` works unchanged. The script writes `hooks.json` (keeping existing hooks),
+  turns Codex's own memories off in `config.toml` without duplicating a table, adds a short block to
+  `AGENTS.md`, backs each file up, and runs every hook with Codex's input before saying it passed.
+  The one manual step is trusting the hooks with `/hooks` in Codex. See "Using it with Codex" in the
+  README.
+- Carried over from the host brain since 0.2.9, covered by the clean-install test of this release
+  (init, hook, `verify.mjs` 59 passed) but not each re-tested on its own:
+  - session start injects a short hot list (`index/HOT.md`) instead of the whole manifest, which had
+    grown past its cap and was being cut in half;
+  - a memory can also be found by the questions it answers (`index/question-embeddings.json`), scored
+    beside its description;
+  - a memory can be deleted without unlinking it by hand, into a sealed graveyard it can be restored from;
+  - the prompt hook reads only the end of the transcript, after a 529 MB transcript made it slow;
+  - multi-machine mode: recall can carry the memory body to a machine that holds no copy, and a
+    3 minute cooldown with one retry when a relayed connection is slow to open.
+
 ## 0.2.9
 
 - **Dashboard: the `hidden` attribute never worked on the example banner.** `.demo` sets

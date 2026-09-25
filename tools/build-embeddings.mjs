@@ -65,6 +65,28 @@ const payload = {
 };
 writeFileSync(join(IDX, 'embeddings.json'), JSON.stringify(payload), 'utf8');
 
+/* THE QUESTIONS GET THEIR OWN VECTORS. Each question is embedded on its own rather than appended to
+   the description: averaging them into one vector is the dilution this was meant to cure, and it is
+   why the file keeps parallel arrays with the slug repeated. Same model, same normalisation, so a
+   question vector and a description vector are directly comparable and recall can take the better
+   of the two. Costs about 4 ms each and the file only grows with questions actually written. */
+let questionRows = { slugs: [], texts: [] };
+try { questionRows = JSON.parse(readFileSync(join(IDX, 'questions.json'), 'utf8')); } catch { /* none written yet */ }
+const qVectors = [];
+for (const q of questionRows.texts || []) {
+  const out = await embed(q, { pooling: 'mean', normalize: true });
+  qVectors.push(Array.from(out.data).map((x) => Math.round(x * 1e4) / 1e4));
+}
+const qPayload = {
+  model: MODEL,
+  dims: qVectors[0]?.length ?? 0,
+  count: qVectors.length,
+  questionsHash: hash((questionRows.texts || []).join('')),
+  slugs: questionRows.slugs || [],
+  vectors: qVectors,
+};
+writeFileSync(join(IDX, 'question-embeddings.json'), JSON.stringify(qPayload), 'utf8');
+
 function hash(str) {
   let h = 5381;
   for (let i = 0; i < str.length; i++) h = ((h * 33) ^ str.charCodeAt(i)) >>> 0;

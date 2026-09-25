@@ -31,7 +31,12 @@ const IDX = join(BRAIN, 'index');
 const CHECK = process.argv.includes('--check');
 const drift = [];
 
-function emit(path, content) {
+/* `volatile` marks a generated file that is NOT derived from memory/ alone, so a byte comparison
+   against a fresh build is meaningless. index/HOT.md reads the recall log, which gains a line every
+   time anyone recalls anything, so it differs from itself seconds later and would fail the drift
+   gate forever. Drift is the check that the index still matches the memories; HOT is not that. */
+function emit(path, content, volatile) {
+  if (CHECK && volatile) return;
   if (!CHECK) { writeFileSync(path, content, 'utf8'); return; }
   let current = '';
   try { current = readFileSync(path, 'utf8'); } catch { drift.push(`${path} (missing)`); return; }
@@ -106,6 +111,12 @@ for (const f of files) {
     // rendered literally in the injected text (`\"now\"`), which a model reads as characters.
     rule: (fm.rule || '').replace(/^["']|["']$/g, '').split('\\"').join('"').split("\'").join("'").trim() || null,
     ruleOrder: Number(fm.rule_order || 999),
+    /* THE QUESTIONS THIS MEMORY ANSWERS, in the words he would actually type. Measured 2026-09-21:
+       the memory behind "I need to know who did what action" scores 0.144 against the description we
+       index, and 0.523 against the question it answers. For "stop writing so much", 0.216 against
+       0.622. A description says what a memory IS ABOUT, which is not what anybody types into a
+       prompt. One line, pipe separated, so the existing key:value parser reads it unchanged. */
+    asks: (fm.asks || '').replace(/^["']|["']$/g, '').split('|').map((q) => q.trim()).filter(Boolean),
   });
 }
 
@@ -218,6 +229,107 @@ const manifestText = manifest.join('\n');
 emit(join(BRAIN, 'MANIFEST.md'), manifestText);
 
 // ---------------------------------------------------------------------------
+// index/HOT.md - what session start injects INSTEAD of the whole manifest.
+//
+// The owner, 2026-09-22, on the open item "drop the manifest for recall plus the hot list": "do this".
+// The manifest had grown to 187 KB against an 80 KB injection cap, so 57 percent of it was cut and
+// roughly 250 memories were invisible at session start while the injected text claimed to list
+// everything (see memory/reference_manifest_cut_in_half_at_session_start.md). A list that lies
+// about being complete is worse than no list: an agent that scans it and finds nothing concludes
+// the brain does not know, and answers from its own head.
+//
+// What replaces it is not nothing. Per-prompt recall in hooks/pre-turn.mjs already searches ALL
+// memories by keyword and by meaning on every single turn and names the matches, which is the job
+// the manifest was doing badly. This file covers the one thing recall cannot: continuity. The
+// memories this fleet actually used lately, and the ones written in the last week, which a fresh
+// session has no reason to ask for but every reason to know exist.
+const HOT_RECENT_DAYS = 7;
+const HOT_USED_DAYS = 14;
+const HOT_USED_MAX = 25;
+const HOT_DESC_CHARS = 150;
+const short = (d) => (d.length > HOT_DESC_CHARS ? d.slice(0, HOT_DESC_CHARS - 1).trimEnd() + '...' : d);
+const bySlug = new Map(entries.map((e) => [e.file.replace(/\.md$/, ''), e]));
+
+// Most used, straight from the recall log: one line per recall, carrying the slugs it returned.
+const used = new Map();
+try {
+  const cut = Date.now() - HOT_USED_DAYS * 86400000;
+  for (const line of readFileSync(join(BRAIN, '.recall-pulse.jsonl'), 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const ev = JSON.parse(line);
+      if (!ev || ev.at < cut) continue;
+      for (const slug of ev.slugs || []) used.set(slug, (used.get(slug) || 0) + 1);
+    } catch { /* one bad line is not a reason to lose the rest */ }
+  }
+} catch { /* no recall log on this machine, the recent list still works */ }
+const topUsed = [...used.entries()]
+  .filter(([slug]) => bySlug.has(slug))
+  .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  .slice(0, HOT_USED_MAX);
+
+/* RECENT MEANS THE FILE CHANGED, NOT THE FIELD SAYS SO. The frontmatter `updated:` is not a
+   reliable clock: 200 memories carry 2026-09-15 and 56 carry 2026-09-17 because they were stamped
+   in bulk, so filtering on it put 380 entries in this file and made it 79 KB, which is the manifest
+   problem again in a smaller box. Git knows exactly which memory files were touched and when. */
+const HOT_RECENT_MAX = 20;
+let recent = [];
+try {
+  const raw = execFileSync('git', ['-C', BRAIN, 'log', `--since=${HOT_RECENT_DAYS}.days`, '--name-only', '--pretty=format:', '--', 'memory/'], { encoding: 'utf8', timeout: 15000 });
+  const seen = new Set();
+  for (const line of raw.split('\n')) {
+    const f = line.trim().replace(/^memory\//, '');
+    if (!f.endsWith('.md') || f === 'MEMORY.md' || seen.has(f)) continue;
+    seen.add(f);
+    const e = bySlug.get(f.replace(/\.md$/, ''));
+    if (e) recent.push(e);
+    if (recent.length >= HOT_RECENT_MAX) break;
+  }
+} catch {
+  /* no git here. Fall back to the field, capped, rather than emitting nothing. */
+  const cut = new Date(Date.now() - HOT_RECENT_DAYS * 86400000).toISOString().slice(0, 10);
+  recent = entries.filter((e) => (e.updated || '') >= cut)
+    .sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.file.localeCompare(b.file))
+    .slice(0, HOT_RECENT_MAX);
+}
+
+const hotDoc = [
+  '# HOT - what is in play right now',
+  '',
+  `This is NOT the whole brain. The brain holds ${entries.length} memories and this file names a few.`,
+  'Generated by tools/build-index.mjs, do not hand-edit.',
+  '',
+  'You do not have to scan anything to reach the rest. Every turn, hooks/pre-turn.mjs searches all',
+  `${entries.length} memories by keyword and by meaning against what was just said and names the`,
+  'matches to open. What is below is the other half: what this fleet has been using, and what was',
+  'written in the last week, so a session that just started knows what it is walking into.',
+  '',
+  'Nothing here tells you what a memory SAYS. Open `memory/<slug>.md` before acting on it.',
+  '',
+];
+if (topUsed.length) {
+  hotDoc.push(`## Used most in the last ${HOT_USED_DAYS} days (${topUsed.length})`, '');
+  for (const [slug, n] of topUsed) hotDoc.push(`- ${slug} (${n}): ${short(bySlug.get(slug).desc)}`);
+  hotDoc.push('');
+}
+if (recent.length) {
+  hotDoc.push(`## Touched in the last ${HOT_RECENT_DAYS} days, newest first (${recent.length})`, '');
+  for (const e of recent) hotDoc.push(`- ${e.file.replace(/\.md$/, '')}: ${short(e.desc)}`);
+  hotDoc.push('');
+}
+hotDoc.push(
+  '## Everything else',
+  '',
+  'Recall finds it. If you want to look by hand: `index/<type>.md` per type, `MANIFEST.md` for the',
+  'full list of slugs and descriptions, or `grep -ril "<term>" memory/`. MANIFEST.md is still',
+  'generated and still complete on disk. It is no longer injected, because injecting it meant',
+  'cutting 57 percent of it and telling the session it had everything.',
+  '',
+);
+const hotText = hotDoc.join('\n');
+emit(join(BRAIN, 'index', 'HOT.md'), hotText, true);
+
+// ---------------------------------------------------------------------------
 // index/keywords.json - the inverted index behind per-prompt recall.
 //
 // MANIFEST.md solved "the agent cannot search for what it does not know exists" by putting
@@ -250,6 +362,16 @@ for (const e of entries) {
     if (!postings.has(t)) postings.set(t, new Set());
     postings.get(t).add(slug);
   }
+  // The questions are retrieval surface too, and this is the note above taken one step further
+  // rather than contradicted: the gap was a description missing the word he says, and instead of
+  // hoping one sentence carries both what a memory IS and what it ANSWERS, the questions are their
+  // own text. They are his phrasing, not the body, so this is not the body indexing that regressed.
+  for (const q of e.asks || []) {
+    for (const t of terms(q)) {
+      if (!postings.has(t)) postings.set(t, new Set());
+      postings.get(t).add(slug);
+    }
+  }
 }
 
 const keywords = {};
@@ -258,6 +380,17 @@ for (const [t, slugs] of [...postings].sort((a, b) => a[0].localeCompare(b[0])))
 }
 const descs = {};
 for (const e of entries) descs[e.file.replace(/\.md$/, '')] = e.desc;
+
+/* THE QUESTION INDEX, a second retrieval surface beside the description.
+   Its own file rather than folded into keywords.json or embeddings.json on purpose: those two are
+   read by the server, both hooks, the map and the dashboard, every one of which assumes one row per
+   memory. Parallel arrays here let one memory carry several questions without changing any of them. */
+const askRows = { slugs: [], texts: [] };
+for (const e of entries) {
+  const slug = e.file.replace(/\.md$/, '');
+  for (const q of e.asks || []) { askRows.slugs.push(slug); askRows.texts.push(q); }
+}
+emit(join(BRAIN, 'index', 'questions.json'), JSON.stringify(askRows, null, 0));
 
 // index/rules.json - the always-on behaviour rules, GENERATED from memory frontmatter.
 //

@@ -50,6 +50,15 @@ try {
   if (!ref) { try { ref = git(['rev-parse', '--abbrev-ref', '@{upstream}']).trim(); } catch { /* none */ } }
   if (!ref) { const b = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim(); ref = REMOTE + '/' + b; }
 
+  // Everything below clears the way FOR a pull, so it is only safe when that pull can succeed. With
+  // no common ancestor git refuses with "unrelated histories" after this tool has already moved the
+  // mirror's new tools aside and reset modified ones to the old local commit, and nothing puts them
+  // back. That rolled a laptop client back 20 files on 2026-09-17.
+  if (!gitOk(['merge-base', 'HEAD', ref])) {
+    say('unwedge: HEAD and ' + ref + ' share no history, a pull cannot merge them, leaving the tree alone');
+    process.exit(0);
+  }
+
   const incoming = git(['diff', '--name-only', 'HEAD..' + ref]).split(NL).map((s) => s.trim()).filter(Boolean);
   if (!incoming.length) { say('unwedge: nothing incoming from ' + ref); process.exit(0); }
 

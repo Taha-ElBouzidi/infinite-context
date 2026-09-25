@@ -156,15 +156,39 @@ function fetch(path, binary) {
 // ---- 1. Cheap probe first -----------------------------------------------------------------
 // The manifest is ~35KB and makes the server hash every file. On a two-minute timer that is
 // pure waste, since almost every run has nothing to do. /dist/version is a stat-only digest.
+//
+// THE SERVER NOT CHANGING DOES NOT MEAN THIS DISK DID NOT. The state file used to hold only the
+// server's version, so "already current" meant "the server has not moved since I last synced",
+// never "my files are what the server has". On a laptop client, 2026-09-17, session start ran
+// unwedge-pull, which moved 5 mirror-delivered tools aside and reset 15 others to an old git
+// commit, and then the git pull failed on unrelated histories. The mirror kept saying already
+// current, every minute, over 20 stale or missing files, including the hook fix it was meant to
+// deliver. So the state now also records a stat digest of the files it wrote, and the probe skips
+// only when both still match.
+function localDigest(paths) {
+  const h = createHash('sha256');
+  for (const rel of [...paths].sort()) {
+    try {
+      const st = statSync(join(BRAIN, rel));
+      h.update(rel + ':' + st.size + ':' + Math.floor(st.mtimeMs) + '|');
+    } catch { h.update(rel + ':absent|'); }
+  }
+  return h.digest('hex').slice(0, 16);
+}
+function saveState(remote, paths) {
+  try { writeFileSync(STATE, JSON.stringify({ remote, local: localDigest(paths), paths })); } catch { /* not fatal */ }
+}
+
 let remoteVersion = null;
 if (!FORCE) {
   try {
     const v = JSON.parse(fetch('/dist/version') || '{}');
     if (v && v.version) {
       remoteVersion = v.version;
-      let seen = '';
-      try { seen = readFileSync(STATE, 'utf8').trim(); } catch { /* first run */ }
-      if (seen === remoteVersion) {
+      let seen = null;
+      try { seen = JSON.parse(readFileSync(STATE, 'utf8')); } catch { /* first run, or the old bare-version format */ }
+      if (seen && seen.remote === remoteVersion && Array.isArray(seen.paths)
+        && seen.local === localDigest(seen.paths)) {
         if (!QUIET) out('already current (version ' + remoteVersion + ', ' + v.files + ' files)');
         done(0);
       }
@@ -221,7 +245,7 @@ if (memoryCount >= MIN_MEMORIES_TO_TRUST) {
 for (const p of spared) out('held back, too recent to be sure it is a deletion: ' + p);
 
 if (!stale.length && !orphans.length) {
-  if (remoteVersion) { try { writeFileSync(STATE, remoteVersion); } catch { /* not fatal */ } }
+  if (remoteVersion) saveState(remoteVersion, manifest.files.map((f) => f.path));
   if (!QUIET) out('already current: ' + manifest.files.length + ' files match the server');
   done(0);
 }
@@ -286,7 +310,7 @@ out('updated ' + fixed + ' of ' + stale.length + ' file(s), removed ' + removed 
   + orphans.length + ', from ' + base);
 
 // Only record the version once everything actually landed, so a partial run retries next time.
-if (remoteVersion && okAll) { try { writeFileSync(STATE, remoteVersion); } catch { /* not fatal */ } }
+if (remoteVersion && okAll) saveState(remoteVersion, manifest.files.map((f) => f.path));
 
 if (fixed && stale.some((f) => f.path.slice(0, 6) === 'hooks/')) {
   out('NOTE: hooks changed. A running Claude Code session loads hooks at start, so restart the');

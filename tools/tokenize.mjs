@@ -32,7 +32,15 @@ const STOP = new Set((
   + 'use used using need needs want wants like likes see saw know known think thought take took go '
   + 'going come came what which who whom whose while during before after above below between '
   + 'through against because until unless upon per via etc am pm ok okay yeah yes dont doesnt isnt '
-  + 'wasnt cant wont im ive id ill youre theyre thats whats lets us them him one two three'
+  + 'wasnt cant wont im ive id ill youre theyre thats whats lets us them him one two three '
+  // CHAT FILLER. Measured 2026-09-23: "btw restart yourself so we can use the new model 5.5"
+  // returned five memories and two of them matched on "btw" alone, because several descriptions
+  // quote the owner saying it ("btw we always only use bypass permissions", "btw so you know we work in
+  // morocco"). A word he opens sentences with is not a topic, and here it crowded out the memory
+  // that actually answered the question. Same class of noise as the stopwords above.
+  + 'btw fyi pls plz asap anyway anyways basically actually literally really quite rather maybe '
+  + 'perhaps please thanks thank hey hi hello yo lol haha oh ah um uh hmm well right sure fine '
+  + 'let lets gonna wanna gotta stuff thing things something anything nothing everything'
 ).split(/\s+/));
 
 // Order matters: longer suffixes first, so "ingly" does not become "ing" then "in".

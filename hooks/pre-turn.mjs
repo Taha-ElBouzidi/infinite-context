@@ -28,13 +28,14 @@
 // FAILS SILENT ALWAYS. Running on every turn means a crash here would break every turn of
 // every session on every machine. The worst acceptable outcome is the old behaviour.
 
-import { readFileSync, existsSync, writeFileSync, appendFileSync, unlinkSync, statSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, appendFileSync, unlinkSync, statSync, mkdirSync, readdirSync, openSync, readSync, fstatSync, closeSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { terms as qterms } from '../tools/tokenize.mjs';
 import { execFileSync, spawn } from 'node:child_process';
+const HOOK_STARTED = Date.now();
 
 // Synchronous HTTP to the local embed daemon.
 //
@@ -223,9 +224,7 @@ function fetchRulesRemote(brain) {
       + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
       + 'url = "' + cfg.url + '/rules"' + '\n'
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
-    const out = execFileSync('curl', ['-K', '-'], {
-      input: conf, encoding: 'utf8', windowsHide: true, timeout: 6000, stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    const out = curlRemote(conf, 6000, cfg);
     const parsed = JSON.parse(out || '{}');
     return Array.isArray(parsed.rules) ? parsed.rules : null;
   } catch { return null; }
@@ -248,7 +247,64 @@ function fetchRulesRemote(brain) {
 // the common case. A stat() is microseconds, so after a failure the remote is skipped entirely
 // until the cooldown lapses. Same trick the local daemon check already uses.
 const REMOTE_DOWN = join(homedir(), '.claude', 'havok-remote-embed-down');
-const DOWN_COOLDOWN_MS = 10 * 60 * 1000;
+// 3 minutes, not 10. Measured 2026-08-31 (reference_recall_connect_timeout_derp): over the relay a
+// lost race is common and each one cost ten minutes of keyword-only recall. That fix never reached
+// this copy; the locked-down client machine lost recall for ten minutes again on 2026-09-17, 15:43 to 15:54.
+const DOWN_COOLDOWN_MS = 3 * 60 * 1000;
+
+// BEGIN curlRemote
+// A COLD RELAY LOSES THE FIRST RACE AND WINS THE SECOND. the locked-down client machine, 2026-09-17: after the laptop sat
+// idle, the first connection through the Madrid DERP relay took 6.9 s and the next ones 93 ms. The hook
+// gave up at connect-timeout 4 and marked the server down. So a failure in the CONNECT phase, over the
+// relay, gets one more try, while a slow answer or a missing curl does not.
+//
+// The retry only spends what is left of the hook's limit: settings.json runs this hook with a 10 s
+// timeout, and past it Claude Code discards the whole injection, rules included. The margin keeps time
+// for the work after the call. Tested by tools/test-remote-retry.mjs, which runs this exact text.
+const HOOK_LIMIT_MS = 10000;
+const HOOK_MARGIN_MS = 1500;
+function curlRemote(conf, timeoutMs, cfg) {
+  const t0 = Date.now();
+  try {
+    return execFileSync('curl', ['-K', '-'], {
+      input: conf, encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['pipe', 'pipe', 'ignore'],
+    });
+  } catch (e) {
+    const inConnectPhase = typeof e.status === 'number' && Date.now() - t0 < ((cfg && cfg.ct) || 1) * 1000 + 1000;
+    const leftMs = HOOK_LIMIT_MS - HOOK_MARGIN_MS - (Date.now() - HOOK_STARTED);
+    const leftSec = Math.floor(leftMs / 1000);
+    if (!inConnectPhase || !(cfg && cfg.connectTo) || leftSec < 1) throw e;
+    const retry = conf
+      .replace(/connect-timeout = \d+/, 'connect-timeout = ' + Math.min(cfg.ct, leftSec))
+      .replace(/max-time = \d+/, 'max-time = ' + leftSec);
+    return execFileSync('curl', ['-K', '-'], {
+      input: retry, encoding: 'utf8', windowsHide: true, timeout: Math.min(timeoutMs, leftMs), stdio: ['pipe', 'pipe', 'ignore'],
+    });
+  }
+}
+
+// What curl actually reported, for the down mark. Every failure used to write the same inferred
+// sentence, so a TLS race over the relay read exactly like the server being off, and nobody found the
+// cause for weeks (reference_recall_connect_timeout_derp). Restored 2026-09-17: the laptop had this on
+// 2026-08-31 and a memory commit from a stale clone removed it on 2026-09-03.
+function curlWhy(e) {
+  if (e instanceof SyntaxError) return 'the server answered with something that is not JSON';
+  if (e && e.code === 'ENOENT') return 'curl not found on this machine';
+  if (e && e.code === 'ETIMEDOUT') return 'the hook stopped waiting for curl';
+  const reasons = {
+    6: 'could not resolve the server name',
+    7: 'could not connect (refused, or no route)',
+    28: 'timed out (connect or answer)',
+    35: 'TLS handshake failed',
+    52: 'the server closed the connection with no answer',
+    56: 'the connection was reset while receiving',
+    60: 'server certificate not trusted',
+    77: 'could not read the CA certificate file',
+  };
+  const status = e && e.status;
+  return typeof status === 'number' ? (reasons[status] || 'curl exit ' + status) : 'unknown failure';
+}
+// END curlRemote
 
 // The mark carries WHY, not just when. a laptop client, 2026-08-22: a degraded state that nothing can
 // explain leaves the user inferring it from answers feeling shallower. With a reason recorded,
@@ -288,9 +344,7 @@ function fetchVectorRemote(text, brain) {
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + JSON.stringify({ text }).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
-    const out = execFileSync('curl', ['-K', '-'], {
-      input: conf, encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    const out = curlRemote(conf, 5000, cfg);
     const parsedOne = JSON.parse(out || '{}');
     if (parsedOne.v) LAST_SERVER_V = parsedOne.v;
     const v = parsedOne.vector;
@@ -306,10 +360,7 @@ function fetchVectorRemote(text, brain) {
     markRemoteDown('server answered without a vector, likely an expired or wrong token');
     return null;
   } catch (e) {
-    const msg = String(e && e.message || '');
-    markRemoteDown(/ETIMEDOUT|timed out/i.test(msg) ? 'timed out reaching the server'
-      : /ENOENT/i.test(msg) ? 'curl not found on this machine'
-      : 'could not reach the server, off the network or it is down');
+    markRemoteDown('embed failed: ' + curlWhy(e));
     return null;
   }
 }
@@ -336,9 +387,7 @@ function fetchVectorsRemote(texts, brain) {
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + JSON.stringify({ texts }).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 9' + '\n';
-    const out = execFileSync('curl', ['-K', '-'], {
-      input: conf, encoding: 'utf8', windowsHide: true, timeout: 9000, stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    const out = curlRemote(conf, 9000, cfg);
     const parsed = JSON.parse(out || '{}');
     if (parsed.v) LAST_SERVER_V = parsed.v;
     const vs = parsed.vectors;
@@ -349,8 +398,8 @@ function fetchVectorsRemote(texts, brain) {
     if (parsed.error === 'unauthorized') forgetCachedToken();
     markRemoteDown('server answered without vectors, likely an expired or wrong token');
     return null;
-  } catch {
-    markRemoteDown('could not reach the server for a batch embed');
+  } catch (e) {
+    markRemoteDown('batch embed failed: ' + curlWhy(e));
     return null;
   }
 }
@@ -429,12 +478,27 @@ function postPulse(hits, brain) {
   } catch { /* never break a turn to file a statistic */ }
 }
 
+/* DOES THIS MACHINE HOLD THE MEMORIES AT ALL. The owner, 2026-09-21: "local recall, and local brain copy
+   is not an option." Every machine except the host now has hooks and tools and no memory/ at all, so
+   a recall that returns slugs leaves it one round trip per memory away from the thing it needs, 216
+   ms each, and an agent in a hurry answers from the description instead. On the host the files are
+   right there and a path is cheaper than a copy of the text, so this decides per machine rather than
+   being a setting anyone has to remember. */
+function holdsMemoriesLocally(brain) {
+  try { return readdirSync(join(brain, 'memory')).some((f) => f.endsWith('.md') && f !== 'MEMORY.md'); }
+  catch { return false; }
+}
+
 function fetchRecallRemote(prompt, queries, brain) {
   if (remoteRecentlyFailed()) return null;
   const cfg = remoteEmbedConfig(brain);
   if (!cfg) return null;
   try {
-    const payload = JSON.stringify({ prompt: String(prompt).slice(0, 20000), queries });
+    const payload = JSON.stringify({
+      prompt: String(prompt).slice(0, 20000),
+      queries,
+      bodies: !holdsMemoriesLocally(brain),
+    });
     const conf = 'header = "content-type: application/json"' + '\n'
       + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
@@ -443,16 +507,14 @@ function fetchRecallRemote(prompt, queries, brain) {
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 9' + '\n';
-    const out = execFileSync('curl', ['-K', '-'], {
-      input: conf, encoding: 'utf8', windowsHide: true, timeout: 9000, stdio: ['pipe', 'pipe', 'ignore'],
-    });
+    const out = curlRemote(conf, 9000, cfg);
     const parsed = JSON.parse(out || '{}');
     if (parsed.v) LAST_SERVER_V = parsed.v;
     if (!Array.isArray(parsed.ranked)) return null;
     try { unlinkSync(REMOTE_DOWN); } catch { /* was not marked */ }
     return parsed.ranked;
-  } catch {
-    markRemoteDown('could not reach the server for recall');
+  } catch (e) {
+    markRemoteDown('recall failed: ' + curlWhy(e));
     return null;
   }
 }
@@ -597,6 +659,31 @@ const ok = (ctx) => {
 // Capped hard. This is a topic hint, not a second prompt, and an unbounded tail would push the
 // question out of the way exactly as a long paste does.
 const CONTEXT_CHARS = 700;
+/* ONLY THE END OF THE TRANSCRIPT IS EVER READ. This used to readFileSync the whole file and split
+   it, under a comment claiming it was "never parsed whole". It was walked backwards, but only after
+   every byte had been read and split. A long conversation's transcript reached 529 MB on
+   2026-09-17 and the hook took 13 to 16 seconds, past its 10 second limit, so Claude Code threw the
+   output away and that conversation got no recall and no reply rules at all, every single turn.
+   Now it reads the last megabyte and grows the window four times over only if that tail held too
+   few messages (one tool result line can be several megabytes of screenshot). Checked against the
+   old function on five real transcripts: identical context every time, 26ms instead of 14s. */
+const TAIL_START = 1 << 20;
+const TAIL_MAX = 64 << 20;
+function tailLines(tp, enough) {
+  const fd = openSync(tp, "r");
+  try {
+    const size = fstatSync(fd).size;
+    for (let want = TAIL_START; ; want *= 4) {
+      const len = Math.min(want, size);
+      const buf = Buffer.alloc(len);
+      readSync(fd, buf, 0, len, size - len);
+      let lines = buf.toString("utf8").split(String.fromCharCode(10));
+      if (len < size) lines = lines.slice(1);
+      lines = lines.filter(Boolean);
+      if (enough(lines) || len >= size || want >= TAIL_MAX) return lines;
+    }
+  } finally { closeSync(fd); }
+}
 function readRecentContext(payload) {
   try {
     if (payload && typeof payload.context === "string" && payload.context.trim()) {
@@ -604,27 +691,30 @@ function readRecentContext(payload) {
     }
     const tp = payload && payload.transcript_path;
     if (!tp || !existsSync(tp)) return "";
-    const lines = readFileSync(tp, "utf8").split(String.fromCharCode(10)).filter(Boolean);
-    const msgs = [];
-    // Newest first, stopping as soon as there is enough. A transcript can be tens of megabytes,
-    // so it is walked backwards and never parsed whole.
-    for (let i = lines.length - 1; i >= 0 && msgs.join(" ").length < CONTEXT_CHARS * 2; i -= 1) {
-      let o = null;
-      try { o = JSON.parse(lines[i]); } catch { continue; }
-      const role = o && o.message && o.message.role;
-      if (role !== "user" && role !== "assistant") continue;
-      const c = o.message.content;
-      let text = "";
-      if (typeof c === "string") text = c;
-      else if (Array.isArray(c)) text = c.filter((p) => p && p.type === "text").map((p) => p.text).join(" ");
-      text = String(text).replace(new RegExp("\\s+", "g"), " ").trim();
-      // Skip the harness noise: hook injections and tool dumps are not what the turn is about.
-      if (!text || text.length < 12) continue;
-      if (/HOW TO REPLY|BRAIN RECALL|system-reminder|<function_/i.test(text)) continue;
-      msgs.unshift(text.slice(0, 400));
-    }
+    let msgs = [];
+    tailLines(tp, (lines) => (msgs = recentMessages(lines)).join(" ").length >= CONTEXT_CHARS * 2);
     return msgs.join(" ").slice(-CONTEXT_CHARS);
   } catch { return ""; }
+}
+function recentMessages(lines) {
+  const msgs = [];
+  // Newest first, stopping as soon as there is enough.
+  for (let i = lines.length - 1; i >= 0 && msgs.join(" ").length < CONTEXT_CHARS * 2; i -= 1) {
+    let o = null;
+    try { o = JSON.parse(lines[i]); } catch { continue; }
+    const role = o && o.message && o.message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    const c = o.message.content;
+    let text = "";
+    if (typeof c === "string") text = c;
+    else if (Array.isArray(c)) text = c.filter((p) => p && p.type === "text").map((p) => p.text).join(" ");
+    text = String(text).replace(new RegExp("\\s+", "g"), " ").trim();
+    // Skip the harness noise: hook injections and tool dumps are not what the turn is about.
+    if (!text || text.length < 12) continue;
+    if (/HOW TO REPLY|BRAIN RECALL|system-reminder|<function_/i.test(text)) continue;
+    msgs.unshift(text.slice(0, 400));
+  }
+  return msgs;
 }
 
 try {
@@ -989,8 +1079,12 @@ try {
     const bySparse = new Set(sparseRanked.map(([s]) => s));
     const byDense = new Set(denseRanked.map(([s]) => s));
     const hits = serverRanked
+      // The body, and how much of it, travel with the hit. This rebuilt each one with a fixed
+      // shape, so a server that had just sent 1500 characters of the memory had them thrown away
+      // one line later and the injection still told the agent to go and fetch it.
       ? serverRanked.filter((m) => m && m.slug).map((m) => ({
         slug: m.slug, how: m.how || 'both', description: m.description || '',
+        body: m.body || '', chars: m.chars || 0, truncated: !!m.truncated,
       }))
       : localRanked.map(([slug]) => ({
         slug,
@@ -1081,9 +1175,19 @@ try {
         // a stale memory/ and gets recalled slugs whose files are not on that disk. So when the
         // local file is missing, name the command that fetches the body from the server.
         const p = memPath(h.slug);
-        out.push(existsSync(p)
-          ? `  ${p}`
-          : `  node tools/brain-client.mjs read ${h.slug}   (no local copy, fetch it from the server)`);
+        if (existsSync(p)) { out.push(`  ${p}`); continue; }
+        // No local copy. The body came down with the ranking, so it goes in here rather than being
+        // named and left behind a second call the agent may never make.
+        if (h.body) {
+          out.push('  ---');
+          for (const line of String(h.body).split('\n')) out.push('  ' + line);
+          out.push(h.truncated
+            ? '  --- [cut at ' + String(h.body).length + ' of ' + h.chars + ' characters. The rest: '
+              + 'node tools/brain-client.mjs read ' + h.slug + ']'
+            : '  ---');
+        } else {
+          out.push(`  node tools/brain-client.mjs read ${h.slug}   (no local copy, fetch it from the server)`);
+        }
       }
     }
   }
