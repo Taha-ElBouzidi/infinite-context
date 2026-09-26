@@ -489,7 +489,28 @@ function holdsMemoriesLocally(brain) {
   catch { return false; }
 }
 
-function fetchRecallRemote(prompt, queries, brain) {
+/* THE SAME RECALL ON A LOCAL INSTALL (2026-09-26). With no brain server, the hook used to rank with a
+   plain top 5 of its own, so a client got a different recall from the one measured. The local daemon
+   now runs the server's own code (tools/recall-core.mjs) behind /recall, so this asks it first and falls
+   back to the local top 5 only when the daemon is down, older than the route, or serving another brain. */
+function fetchRecallLocal(prompt, queries, brain, parts = 0, contextIndex = -1) {
+  if (!existsSync(ALIVE)) return null;
+  try {
+    const out = execFileSync("curl", [
+      "-s", "--connect-timeout", "1", "--max-time", "6", "-X", "POST",
+      "http://127.0.0.1:" + (process.env.HAVOK_EMBED_PORT || 8477) + "/recall",
+      "-H", "content-type: application/json",
+      "--data-binary", "@-",
+    ], {
+      input: Buffer.from(JSON.stringify({ brain, prompt: String(prompt).slice(0, 20000), queries, parts, contextIndex }), "utf8"),
+      encoding: "utf8", timeout: 6500, stdio: ["pipe", "pipe", "ignore"],
+    });
+    const parsed = JSON.parse(out || "{}");
+    return Array.isArray(parsed.ranked) ? parsed.ranked : null;
+  } catch { return null; }
+}
+
+function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1) {
   if (remoteRecentlyFailed()) return null;
   const cfg = remoteEmbedConfig(brain);
   if (!cfg) return null;
@@ -497,6 +518,8 @@ function fetchRecallRemote(prompt, queries, brain) {
     const payload = JSON.stringify({
       prompt: String(prompt).slice(0, 20000),
       queries,
+      parts,
+      contextIndex,
       bodies: !holdsMemoriesLocally(brain),
     });
     const conf = 'header = "content-type: application/json"' + '\n'
@@ -747,6 +770,9 @@ try {
   let payload = {};
   try { payload = JSON.parse(raw || '{}'); prompt = String(payload.prompt || ''); } catch { prompt = raw; }
   if (!prompt.trim()) ok('');
+  // A background-task or system notification arrives through this hook like a prompt, but it is not a
+  // question: on 2026-09-26 one pulled 40 memories of noise. The rules still go in; recall is skipped.
+  const systemEvent = prompt.trimStart().startsWith('<task-notification>') || prompt.includes('[SYSTEM NOTIFICATION - NOT USER INPUT]');
 
   // WHAT THE CONVERSATION IS ABOUT, not just what was typed last.
   //
@@ -820,10 +846,30 @@ try {
   // index/rules.json in `rule_order`, and this reads that. One source, one edit, every turn on
   // every machine. Falls back to the tier line alone if the file is missing, which degrades to
   // quiet rather than to an agent with no rules and no warning.
+  /* FULL OR SHORT RULES (2026-09-26). The owner: the brain must be cheap enough for a 20 dollar plan
+     and slow local models. The full rules cost about 1,190 tokens a turn; each rule memory also carries
+     a hand-written `rule_short:` (about 440 tokens for all). Tested blind on 24 scenarios, each built to
+     tempt one rule, answered by Gemini 3.8 Flash and graded by Gemini 3.1 Pro: full 23/24, short 23/24.
+     A mechanical cut had failed (it dropped "ask before anything irreversible" and the model sent an
+     email), which is why the short forms are written, not truncated.
+     rulesMode in brain.json: "full", "short", or "auto" (default): full on the first message of a
+     conversation and every 10th, short in between, so the full text is never far back. */
+  let rulesMode = 'auto';
+  try { rulesMode = JSON.parse(readFileSync(join(BRAIN, 'brain.json'), 'utf8')).rulesMode || 'auto'; } catch { /* default */ }
+  if (process.env.HAVOK_RULES_MODE) rulesMode = process.env.HAVOK_RULES_MODE;
+  let turnNo = 1;
+  const sid = payload && payload.session_id && /^[A-Za-z0-9_-]{6,80}$/.test(String(payload.session_id)) ? String(payload.session_id) : null;
+  if (sid) {
+    const turnFile = join(homedir(), '.claude', 'havok-recall-shown', sid + '.turns');
+    try { turnNo = Number(readFileSync(turnFile, 'utf8')) + 1 || 1; } catch { turnNo = 1; }
+    try { mkdirSync(dirname(turnFile), { recursive: true }); writeFileSync(turnFile, String(turnNo)); } catch { /* counting must never cost the turn its rules */ }
+  }
+  const fullRules = rulesMode === 'full' || (rulesMode === 'auto' && (turnNo % 10) === 1);
   out.push(
-    'HOW TO REPLY ' + WHO + '. Generated from the brain, delivered every turn because a rule loaded',
-    'once at session start loses to recency by turn fifty.',
-    '',
+    fullRules
+      ? 'HOW TO REPLY ' + WHO + '. Generated from the brain, delivered every turn because a rule loaded'
+      : 'HOW TO REPLY ' + WHO + ' (short form; the full text comes every 10th message).',
+    ...(fullRules ? ['once at session start loses to recency by turn fifty.', ''] : []),
     '1. ' + tier,
   );
   let rules = null;
@@ -833,7 +879,7 @@ try {
   // from the turn with nothing on screen to say so.
   if (!rules || !rules.length) rules = fetchRulesRemote(BRAIN);
   if (rules && rules.length) {
-    rules.forEach((r, i) => out.push(`${i + 2}. ${r.rule}`));
+    rules.forEach((r, i) => out.push(`${i + 2}. ${fullRules || !r.short ? r.rule : r.short}`));
   } else {
     out.push('(brain rules unavailable: no local index/rules.json and the brain server could not be'
       + ' reached. You are running with almost no behaviour rules. Tell the owner before answering.)');
@@ -962,7 +1008,17 @@ try {
         // The context is an EXTRA query, not a replacement. Scoring takes the best chunk, so a
         // prompt that names its own subject keeps winning on its own chunk exactly as before,
         // and a bare follow-up gains a second chance through the topic it sits in.
-        const baseQueries = (!hasArabic && prompt.length > 2000) ? chunkPrompt(prompt) : [queryText];
+        // A short message that mixes topics ("log my lunch, also did a client pay") is split into its parts,
+        // each searched on its own beside the whole, and each memory keeps its best score. One vector for
+        // the whole message averages the topics and matches none of them well. Measured 2026-09-25 on 30
+        // messages each needing 2 to 4 unrelated memories: fully answered 8 to 15, and on the 280 real
+        // questions two-memory 75 to 77, singles 157 to 158, with no more memories returned.
+        const splitParts = (t) => {
+          const parts = String(t).split(/(?<=[.?!])\s+|\s+(?:also|and also|et aussi|aussi|btw|plus)\s+|,\s+(?:and|et)\s+|;\s+/i)
+            .map((s) => s.trim()).filter((s) => s.length >= 15);
+          return parts.length > 1 ? parts.slice(0, 8) : [];
+        };
+        const baseQueries = (!hasArabic && prompt.length > 2000) ? chunkPrompt(prompt) : [queryText, ...(hasArabic ? [] : splitParts(queryText))];
         const queries = (!hasArabic && recentContext) ? baseQueries.concat([recentContext]) : baseQueries;
         const translationFailed = hasArabic && queryText === prompt.slice(0, 2000);
 
@@ -972,7 +1028,8 @@ try {
         // The prompt preparation above still happens HERE and not on the server, deliberately:
         // chunking is pure string work that costs nothing locally, and the Arabic path needs the
         // claude CLI on this machine. The server receives the already-prepared queries.
-        if (!translationFailed) serverRanked = fetchRecallRemote(prompt, queries, BRAIN);
+        if (!translationFailed && !systemEvent) serverRanked = fetchRecallRemote(prompt, queries, BRAIN, baseQueries.length - 1, queries.length > baseQueries.length ? baseQueries.length : -1);
+        if (!serverRanked && !translationFailed && !systemEvent && holdsMemoriesLocally(BRAIN)) serverRanked = fetchRecallLocal(prompt, queries, BRAIN, baseQueries.length - 1, queries.length > baseQueries.length ? baseQueries.length : -1);
 
         let vecs = [];
         if (serverRanked || translationFailed) {
@@ -1078,7 +1135,7 @@ try {
     // them; locally they are derived from the two channel sets.
     const bySparse = new Set(sparseRanked.map(([s]) => s));
     const byDense = new Set(denseRanked.map(([s]) => s));
-    const hits = serverRanked
+    const hits = systemEvent ? [] : serverRanked
       // The body, and how much of it, travel with the hit. This rebuilt each one with a fixed
       // shape, so a server that had just sent 1500 characters of the memory had them thrown away
       // one line later and the injection still told the agent to go and fetch it.
@@ -1145,17 +1202,35 @@ try {
       // failure this hook exists to prevent: a description says whether a file is worth opening,
       // never what it says. A ready-to-paste path makes reading the lazy option.
       const memPath = (slug) => join(BRAIN, 'memory', slug + '.md').replace(/\\/g, '/');
+      /* COMPACT BLOCK, 2026-09-25. The owner: recall must be cheap enough for a 20 dollar plan and slow
+         local models. Measured on 60 real test messages, the same recalled memories shown four ways, and
+         a model (Gemini 3.8 Flash, all items inline; Haiku gave the same order) choosing which to open:
+         full descriptions plus a path per line, 1,864 tokens, opened 30 of the 119 right memories (it
+         read the long descriptions as if they were the answer and opened 0.8 files); name plus the first
+         60 characters, 304 tokens, opened 89 of 119. So the short line is both six times cheaper and
+         better. The folder is given once; a memory already shown in this conversation (same
+         session_id) is listed by name only: a 25-turn real session went from 62,781 to about 13,600
+         recall tokens. */
+      const shownFile = payload && payload.session_id && /^[A-Za-z0-9_-]{6,80}$/.test(String(payload.session_id))
+        ? join(homedir(), '.claude', 'havok-recall-shown', String(payload.session_id) + '.json') : null;
+      let shown = [];
+      try { if (shownFile) shown = JSON.parse(readFileSync(shownFile, 'utf8')); } catch { /* first turn */ }
+      const shownSet = new Set(shown);
+      const cut = (s, n) => { const x = String(s || ''); return x.length <= n ? x : x.slice(0, n).replace(/\s+\S*$/, '') + '...'; };
       out.push(
         '',
-        `BRAIN RECALL: ${hits.length} memories match this prompt. You have NOT read them.`,
-        'The one-line description only tells you whether a file is worth opening. It never tells',
-        'you what the file says, and answering from it is how a half-remembered fact gets stated',
-        'as current. Open the relevant ones BEFORE you answer, not after: Read the path shown,',
-        'or run the command shown if this machine has no local copy.',
-        'Matched by keyword and by meaning, so judge relevance yourself and skip any that do not apply.',
+        `BRAIN RECALL: ${hits.length} memories (files: ${join(BRAIN, 'memory').split(String.fromCharCode(92)).join('/')}/<name>.md). `
+          + 'These lines only say which files are worth opening, never what they say: open the relevant ones before answering.',
         ...(denseNote ? [denseNote] : []),
-        '',
       );
+      const again = hits.filter((h) => shownSet.has(h.slug) && existsSync(memPath(h.slug))).map((h) => h.slug);
+      try {
+        if (shownFile) {
+          mkdirSync(dirname(shownFile), { recursive: true });
+          writeFileSync(shownFile, JSON.stringify([...new Set([...shown, ...hits.map((h) => h.slug)])]));
+        }
+      } catch { /* remembering what was shown must never cost the turn its recall */ }
+      if (again.length) out.push('- shown earlier in this conversation, still relevant: ' + again.join(', '));
       // Tag each hit with the channel that found it.
       //
       // a laptop client, 2026-08-22, during the first live test of remote embedding: "I see five
@@ -1168,14 +1243,15 @@ try {
       // place. When that tag stops appearing, the dense channel has quietly stopped contributing.
       // The tag is computed where the fusion happened, which is now either here or on the server.
       for (const h of hits) {
-        out.push(`- [${h.how}] ${h.slug}: ${h.description}`);
+        if (again.includes(h.slug)) continue;
+        out.push(`- [${h.how}] ${h.slug}: ${cut(h.description, 60)}`);
         // A path that does not resolve is WORSE than no path. The agent tries to open it, gets
         // nothing, and the cheapest remaining move is to answer from the one-line description,
         // which is the single failure this whole hook exists to prevent. the client company already has
         // a stale memory/ and gets recalled slugs whose files are not on that disk. So when the
         // local file is missing, name the command that fetches the body from the server.
         const p = memPath(h.slug);
-        if (existsSync(p)) { out.push(`  ${p}`); continue; }
+        if (existsSync(p)) continue;
         // No local copy. The body came down with the ranking, so it goes in here rather than being
         // named and left behind a second call the agent may never make.
         if (h.body) {

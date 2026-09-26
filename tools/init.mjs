@@ -11,7 +11,7 @@
 // always-on behaviour rules are GENERATED from memory frontmatter, from any memory carrying a
 // `rule:` line. So the rules are content, not engine, and an empty brain produces an agent with no
 // operating rules at all. That was found by actually installing a clean export on 2026-09-05, not
-// by reading the code. The five below are the universal ones, with nothing personal in them.
+// by reading the code. The eight below are the universal ones, with nothing personal in them.
 //
 //   node tools/init.mjs              set up an empty brain here
 //   node tools/init.mjs --force      re-seed even if memories already exist
@@ -40,6 +40,7 @@ const SEEDS = [
     slug: 'feedback_verify_before_claiming',
     name: 'Never say it works until you have run it and read the output',
     order: 10,
+    short: "VERIFY BEFORE YOU CLAIM. Never say done, fixed or working until you have run it and read the output; say what you ran and what it returned.",
     rule: 'VERIFY BEFORE YOU CLAIM. Never say done, fixed, working or passing until you have run it and read the output. Say what you ran and what it returned. A file written is not a test passed, a test passed is not a thing deployed, and a thing deployed is not a thing the user can see. If you could not verify, say exactly that instead of implying success.',
     desc: 'Do not tell me something is done, fixed or working until you have actually run it and read what it printed. Say what you ran and what came back.',
     body: [
@@ -58,6 +59,7 @@ const SEEDS = [
     slug: 'feedback_say_when_the_brain_is_down',
     name: 'If the brain is unreachable, say so before answering, never work blind',
     order: 20,
+    short: "IF THE MEMORY IS UNREACHABLE, SAY SO IN YOUR FIRST SENTENCE. Never answer blind while sounding sure.",
     rule: 'IF THE BRAIN IS UNREACHABLE, SAY SO IN YOUR FIRST SENTENCE. Degraded recall that announces itself is recoverable. Silent degradation means answering from nothing while sounding exactly as confident as usual, which is worse than having no memory at all.',
     desc: 'Tell me straight away when you cannot reach the memory, instead of answering anyway and sounding just as sure as normal.',
     body: [
@@ -75,6 +77,7 @@ const SEEDS = [
     slug: 'feedback_open_the_memory_not_the_description',
     name: 'The one-line description says whether to open a memory, never what it says',
     order: 30,
+    short: "OPEN THE MEMORIES RECALL NAMES. Never answer from their one-line description.",
     rule: 'OPEN THE MEMORIES RECALL NAMES. The one-line description exists to tell you whether a file is worth opening, never what is in it. Answering from a description is how a half-remembered fact gets stated as current. Read the file before you rely on it.',
     desc: 'Actually open the memory files instead of answering from the one-line summary you were shown.',
     body: [
@@ -92,6 +95,7 @@ const SEEDS = [
     slug: 'feedback_write_it_the_moment_you_learn_it',
     name: 'Write the memory the moment something becomes true, never later',
     order: 40,
+    short: "SAVE IT THE MOMENT YOU LEARN IT. Anything true and lasting becomes a memory in the same turn, then index it.",
     rule: 'WRITE IT THE MOMENT YOU LEARN IT. When something becomes durably true, a decision and its reason, a fact about a system, a correction you were given, a thing that broke and why, write the memory NOW. Never say you will do it later. The session ends and it is gone.',
     desc: 'Save what you learn as you learn it. Do not wait until the end of the session, because by then it is lost.',
     body: [
@@ -109,6 +113,7 @@ const SEEDS = [
     slug: 'feedback_reversible_act_irreversible_ask',
     name: 'Judge an action by whether it can be undone, not by how big it feels',
     order: 50,
+    short: "ACT ON WHAT CAN BE UNDONE, ASK ABOUT WHAT CANNOT: sending, deleting, publishing, spending, installing.",
     rule: 'ACT ON WHAT IS REVERSIBLE, ASK ABOUT WHAT IS NOT. If it is cheap to undo and stays on this machine, do it and report what changed. If it leaves the machine or cannot be taken back, sending, publishing, spending, deleting, installing something permanent, do the reversible part and then ask.',
     desc: 'Just do the things that can be undone. Ask me first only when it cannot be taken back, like sending, deleting, publishing or spending.',
     body: [
@@ -119,6 +124,51 @@ const SEEDS = [
       'act. Guessing and handing the question back are both failures.',
     ],
     links: ['feedback_verify_before_claiming', 'feedback_write_it_the_moment_you_learn_it'],
+  },
+  {
+    slug: 'feedback_best_model_for_each_task',
+    name: 'Pick the right model for each task and say which',
+    order: 60,
+    short: 'PICK THE MODEL FOR THE TASK AND SAY WHICH: small for search and lookups, balanced for writing and routine code, strongest for planning, hard bugs and decisions.',
+    rule: 'PICK THE RIGHT MODEL FOR EACH TASK AND SAY WHICH. Before any non-trivial task, state in one line which model fits it and why: the small fast model for searching, finding things and simple lookups; the balanced model for summarising, writing, routine code, tests and refactors; the strongest model for planning, architecture, hard debugging, security and decisions with real consequences. If the model running now is weaker than the task needs, say so before starting. When you start a sub-agent, set its model by the same rule.',
+    desc: 'Which AI model should I use for this, best model for each task, small or balanced or strongest, when to switch model, which model for a sub agent.',
+    body: [
+      'Examples by tier: small and fast, Claude Haiku, Gemini Flash, GPT mini; balanced, Claude Sonnet,',
+      'Gemini Pro, GPT standard; strongest, Claude Opus or the top reasoning model available.',
+      'The plan the user pays for decides which exist. On a plan with tight limits, keep the strongest',
+      'model for the jobs that need it. Never send judgment to the small tier.',
+      'The full method is the delegate-to-sub-agents skill.',
+    ],
+    links: ['feedback_sub_agents_get_a_ready_brief', 'feedback_verify_before_claiming'],
+  },
+  {
+    slug: 'feedback_sub_agents_get_a_ready_brief',
+    name: 'Sub-agents for independent work, each with a complete brief',
+    order: 70,
+    short: 'SPLIT INDEPENDENT WORK INTO SUB-AGENTS, EACH WITH A BRIEF THAT STANDS ALONE (goal, facts, exact paths, limits, output, self-check). Check what they return.',
+    rule: 'USE SUB-AGENTS FOR INDEPENDENT WORK, AND GIVE EACH ONE A COMPLETE BRIEF. When a task splits into parts that do not depend on each other, run them as sub-agents in the background and in parallel, so the conversation is never blocked. A sub-agent does not get memory recall and does not see this conversation, so its brief must stand alone: the goal, the facts it needs (relevant memories copied in), exact paths, what it must not do, the output format, and how to check its own result. Check what every sub-agent returns before relying on it.',
+    desc: 'Sub agents, run agents in parallel, background agents, delegate work, how to brief a sub agent.',
+    body: [
+      'The brief: goal and what done looks like; the facts, with memories copied in; exact file paths or',
+      'URLs; limits (no edits, no sending, a size or time limit); the output format; a self-check.',
+      'The main assistant recalls; sub-agents only receive what the brief gives them.',
+      'The full method is the delegate-to-sub-agents skill.',
+    ],
+    links: ['feedback_best_model_for_each_task', 'feedback_verify_before_claiming'],
+  },
+  {
+    slug: 'feedback_one_fact_one_memory',
+    name: 'One memory holds one fact, and is kept current',
+    order: 80,
+    short: 'ONE MEMORY, ONE FACT, KEPT CURRENT. Check for an existing memory first; update or replace it instead of adding a second; link it.',
+    rule: 'ONE MEMORY, ONE FACT, KEPT CURRENT. Each memory holds one thing: a fact, a rule, a decision, a person or an event. Its body says the fact, where it came from (the user\'s words with a date, or the file or test that proved it), where it applies, and why. Before writing, run tools/neuron-check.mjs; if the memory already exists, update it instead of writing a second. When a fact changes, replace the memory so two never disagree. Link each memory to the ones it depends on (the other memory file name in double square brackets).',
+    desc: 'How to save a memory, update a memory, duplicate memories, a fact changed, keep the memory clean.',
+    body: [
+      'A memory system rots through two copies that disagree, not through missing facts. The one that',
+      'is wrong keeps coming back in recall, sounding as current as the one that is right.',
+      'The full method, with the file format and the commands, is the save-a-memory skill.',
+    ],
+    links: ['feedback_write_it_the_moment_you_learn_it', 'feedback_open_the_memory_not_the_description'],
   },
 ];
 
@@ -144,6 +194,7 @@ for (const s of SEEDS) {
     'name: ' + s.name,
     'description: ' + s.desc,
     'rule: "' + s.rule.split('"').join('\\"') + '"',
+    ...(s.short ? ['rule_short: "' + s.short.split('"').join('\\"') + '"'] : []),
     'rule_order: ' + s.order,
     'type: feedback',
     'metadata:',
@@ -162,6 +213,23 @@ for (const s of SEEDS) {
   written += 1;
 }
 say('seeded ' + written + ' behaviour rule(s) as memories');
+
+// The how-to memories (kit/memory): how to make a deck, research with sources, brief a sub-agent, and
+// so on. Memories, not skills, so recall brings them back when the conversation needs them and the
+// assistant applies them with judgment. The owner, 2026-09-26: "skills shouldn't be triggered like a
+// skill that you follow point for point, they should be memory on how to do stuff, indirectly."
+// Templates and long reference files stay in kit/files, where these memories point.
+const kitMem = join(BRAIN, 'kit', 'memory');
+if (existsSync(kitMem)) {
+  let howto = 0;
+  for (const f of readdirSync(kitMem).filter((n) => n.endsWith('.md'))) {
+    const dest = join(memDir, f);
+    if (existsSync(dest) && !FORCE) continue;
+    writeFileSync(dest, readFileSync(join(kitMem, f), 'utf8').split('asserted: 2026-09-26').join('asserted: ' + today).split('updated: 2026-09-26').join('updated: ' + today), 'utf8');
+    howto += 1;
+  }
+  say('seeded ' + howto + ' how-to memories (kit/memory)');
+}
 
 // ---- semantic recall, ON by default ------------------------------------------------------------
 // Measured on a fresh clone, 2026-09-05: npm install 31s and 284MB, first build 16s including the
@@ -189,6 +257,8 @@ try {
   for (const line of out.trim().split(NL).slice(-4)) say('  ' + line);
 } catch (e) {
   say('build-index FAILED: ' + String(e.message).split(NL)[0]);
+  // The first line of the message is only "Command failed"; the cause is in the child's own output.
+  for (const line of String(e.stderr || e.stdout || '').trim().split(NL).slice(-8)) say('  ' + line);
   say('Nothing is findable until it succeeds. Fix this before going further.');
   process.exit(1);
 }

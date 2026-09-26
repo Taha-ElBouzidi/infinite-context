@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { pipeline, env } from '@xenova/transformers';
+import { embedText, textHash } from './embed-text.mjs';
 
 env.allowLocalModels = false;
 
@@ -33,9 +34,8 @@ export const MODEL = 'Xenova/all-MiniLM-L6-v2';
 const keywords = JSON.parse(readFileSync(join(IDX, 'keywords.json'), 'utf8'));
 const slugs = Object.keys(keywords.descriptions).sort();
 
-// Embed exactly what the keyword index sees: slug plus description. Feeding the dense channel
-// more text than the sparse one would measure the extra text, not the method.
-const docs = slugs.map((s) => `${s.replace(/_/g, ' ')}. ${keywords.descriptions[s]}`);
+// Name, description and the start of the body: see embed-text.mjs for why and the measurement.
+const docs = slugs.map((s) => embedText(BRAIN, s, keywords.descriptions[s]));
 
 const t0 = Date.now();
 const embed = await pipeline('feature-extraction', MODEL);
@@ -59,7 +59,9 @@ const payload = {
   // Fingerprint of the input, so the consumer can tell a stale index from a current one without
   // re-embedding anything. Descriptions are the only thing embedded, so they are the only thing
   // that needs hashing.
-  descriptionsHash: hash(slugs.map((s) => s + '\u0000' + keywords.descriptions[s]).join('\u0001')),
+  // Hash of exactly what was embedded (embed-text.mjs), body start included since 2026-09-25, so a
+  // body edit is seen as stale. The field name is kept so older readers still find it.
+  descriptionsHash: textHash(BRAIN, keywords.descriptions),
   slugs,
   vectors,
 };

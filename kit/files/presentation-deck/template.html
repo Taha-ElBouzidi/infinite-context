@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck Title</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fraunces:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   HTML PRINT DECK TEMPLATE
+   A4 landscape (297mm x 210mm). Chrome: Ctrl+P, A4, Landscape, Margins None.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@page { size: A4 landscape; margin: 0 }
+* { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-sizing: border-box }
+
+@media print {
+  html, body { background: #fff; margin: 0; padding: 0 }
+  .slide { page-break-after: always; break-after: page; box-shadow: none !important; margin: 0 !important }
+  .slide:last-child { page-break-after: avoid; break-after: avoid }
+  .no-print { display: none !important }
+}
+
+@media screen {
+  html, body { background: #e2e8f0; margin: 0; padding: 24px 0 }
+  .slide { margin: 16px auto; box-shadow: 0 12px 40px rgba(15,23,42,0.18); border-radius: 6px }
+}
+
+:root {
+  --ink: #0B1120;
+  --ink-soft: #334155;
+  --muted: #64748B;
+  --line: #E2E8F0;
+  --paper: #FEFCF7;
+  --accent: #1D4ED8;
+  --accent-deep: #1E3A8A;
+  --gold: #F59E0B;
+}
+
+body { font-family: 'Inter', -apple-system, sans-serif; color: var(--ink); line-height: 1.55 }
+
+.slide {
+  width: 297mm;
+  height: 210mm;
+  padding: 14mm 18mm;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+}
+
+h1, h2, h3 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; margin: 0; letter-spacing: -0.01em }
+h1 { font-size: 44pt; line-height: 1.1 }
+h2 { font-size: 26pt; line-height: 1.15 }
+h3 { font-size: 16pt; line-height: 1.25 }
+
+.kicker {
+  font-size: 9.5pt; font-weight: 700; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--accent);
+  margin-bottom: 8pt;
+}
+
+.lead { font-size: 14pt; line-height: 1.55; color: var(--ink-soft); max-width: 230mm; margin: 0 }
+
+/* Brand mark: the one repeated element */
+.brand-mark {
+  position: absolute; top: 10mm; right: 18mm;
+  font-size: 9pt; font-weight: 800; letter-spacing: 0.25em; color: var(--muted);
+  display: flex; align-items: center; gap: 6pt;
+}
+.brand-mark::before {
+  content: ''; width: 7pt; height: 7pt;
+  background: var(--gold); border-radius: 50%;
+}
+
+.slide-index {
+  position: absolute; bottom: 10mm; right: 18mm;
+  font-size: 9pt; color: var(--muted); letter-spacing: 0.15em;
+}
+
+.slide-footer-brand {
+  position: absolute; bottom: 10mm; left: 18mm;
+  font-size: 9pt; font-weight: 700; letter-spacing: 0.25em; color: var(--muted);
+}
+
+/* Dark cover variant */
+.slide.cover { background: linear-gradient(135deg, #0B1120 0%, #1E3A8A 100%); color: #fff; justify-content: center }
+.slide.cover h1 { color: #fff; max-width: 220mm }
+.slide.cover .brand-mark { color: #fff }
+.slide.cover .subtitle { font-family: 'Fraunces', serif; font-size: 18pt; font-style: italic; color: #CBD5E1; margin-top: 14pt; font-weight: 300 }
+.slide.cover .meta { font-size: 10pt; color: #94A3B8; letter-spacing: 0.15em; text-transform: uppercase; margin-top: 18mm }
+
+/* 2-column grid */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10mm; margin-top: 10mm; flex: 1; align-content: start }
+.card {
+  background: #fff; border: 1px solid var(--line); border-radius: 4pt;
+  padding: 12pt 16pt;
+}
+.card h3 { font-family: 'Inter', sans-serif; font-size: 12pt; font-weight: 700; color: var(--ink); margin-bottom: 4pt }
+.card p { font-size: 10.5pt; line-height: 1.5; color: var(--ink-soft); margin: 0 }
+</style>
+</head>
+<body>
+
+<div class="no-print" style="text-align:center;padding:8pt 14pt;background:#fef3c7;max-width:297mm;margin:0 auto 16pt;border-radius:4pt;font-size:10pt;color:#334155;font-family:Inter,sans-serif">
+  Open in Chrome, Ctrl+P. Paper: A4. Layout: Landscape. Margins: None. Background graphics: ON. Save as PDF.
+</div>
+
+<!-- Cover slide -->
+<section class="slide cover">
+  <div class="brand-mark">BRAND</div>
+  <h1>The one line<br/>that matters.</h1>
+  <p class="subtitle">A short supporting idea that frames the deck.</p>
+  <div class="meta">Shared with [audience], [month year]</div>
+</section>
+
+<!-- Content slide: 2-column grid -->
+<section class="slide">
+  <div class="brand-mark">BRAND</div>
+  <div>
+    <div class="kicker">01, Section name</div>
+    <h2>One clear statement</h2>
+  </div>
+  <p class="lead" style="margin-top: 8mm">A single lead paragraph that sets up what the grid below demonstrates. Keep it to two or three sentences.</p>
+  <div class="grid-2">
+    <div class="card"><h3>Point one</h3><p>One or two sentences of substance. Specific, concrete, no fluff.</p></div>
+    <div class="card"><h3>Point two</h3><p>One or two sentences of substance. Specific, concrete, no fluff.</p></div>
+    <div class="card"><h3>Point three</h3><p>One or two sentences of substance. Specific, concrete, no fluff.</p></div>
+    <div class="card"><h3>Point four</h3><p>One or two sentences of substance. Specific, concrete, no fluff.</p></div>
+  </div>
+  <div class="slide-footer-brand">BRAND</div>
+  <div class="slide-index">02 / 03</div>
+</section>
+
+<!-- Closing slide: centered vision -->
+<section class="slide" style="justify-content: center; align-items: flex-start">
+  <div class="brand-mark">BRAND</div>
+  <div class="kicker">03, Vision</div>
+  <h2 style="margin-bottom: 8mm; max-width: 230mm">A closing thought that lands.</h2>
+  <p class="lead" style="font-size: 15pt">The final takeaway, in one or two plain-language sentences that can be quoted back at you.</p>
+  <div class="slide-footer-brand">BRAND</div>
+  <div class="slide-index">03 / 03</div>
+</section>
+
+</body>
+</html>

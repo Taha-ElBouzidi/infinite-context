@@ -109,13 +109,17 @@ const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '');
 const resolvable = new Set();
 for (const m of mem) { resolvable.add(norm(m.stem)); if (m.name) resolvable.add(norm(m.name)); }
 
-const findings = { broken: [], orphan: [], mistyped: [], nodesc: [], dupes: [], stale: [], mindmap: [] };
+const findings = { byname: [], broken: [], orphan: [], mistyped: [], nodesc: [], dupes: [], stale: [], mindmap: [] };
 const inbound = new Map(mem.map((m) => [m.file, 0]));
 
 for (const m of mem) {
   for (const l of m.outLinks) {
     if (!resolvable.has(norm(l))) findings.broken.push(`${m.file} -> [[${l}]]`);
     else {
+      // Recall's link graph (recall-core.mjs) follows a link only by exact file stem. A link that resolves
+      // here only through the display name or a hyphen spelling is silently dropped from recall: 64 such
+      // links in 29 memories were found that way on 2026-09-26.
+      if (!mem.some((x) => x.stem === l)) findings.byname.push(`${m.file} -> [[${l}]] (write the file name: recall ignores this link)`);
       const target = mem.find((x) => norm(x.stem) === norm(l) || (x.name && norm(x.name) === norm(l)));
       if (target) inbound.set(target.file, inbound.get(target.file) + 1);
     }
@@ -178,6 +182,7 @@ console.log(`# Brain reflection report  (${mem.length} memories, stale threshold
 section('Index drift', driftRows, '  Generated index does not match memory/. Fix: node tools/build-index.mjs');
 section('Mind-map contract', findings.mindmap, '  `type` must be TOP LEVEL (MINDMAP_NODES.md). Nested under metadata: the map cannot see it.');
 section('Broken wikilinks', findings.broken, '  These edges point nowhere. Fix the link or create the memory.');
+section('Links by name, not file', findings.byname, '  Resolvable by a reader, invisible to recall. Use the exact file name inside [[ ]].');
 section('Type mismatches', findings.mistyped, '  Filename and declared type disagree. Misfiles the memory and the mind map.');
 section('Missing description', findings.nodesc, '  No description means the memory cannot be found by scanning the index.');
 section('Duplicate candidates', findings.dupes, '  High overlap. Merge, or sharpen the descriptions so they are distinguishable.');

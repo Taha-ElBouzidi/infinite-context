@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { terms } from './tokenize.mjs';
+import { textHash } from './embed-text.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MEM = join(BRAIN, 'memory');
@@ -111,6 +112,9 @@ for (const f of files) {
     // rendered literally in the injected text (`\"now\"`), which a model reads as characters.
     rule: (fm.rule || '').replace(/^["']|["']$/g, '').split('\\"').join('"').split("\'").join("'").trim() || null,
     ruleOrder: Number(fm.rule_order || 999),
+    // A hand-written short form, for the compact rules block (2026-09-26): cutting a rule mechanically
+    // dropped the half of rule 2 that says ask before anything irreversible, and a model then sent an email.
+    ruleShort: (fm.rule_short || '').replace(/^["']|["']$/g, '').trim() || null,
     /* THE QUESTIONS THIS MEMORY ANSWERS, in the words he would actually type. Measured 2026-09-21:
        the memory behind "I need to know who did what action" scores 0.144 against the description we
        index, and 0.523 against the question it answers. For "stop writing so much", 0.216 against
@@ -405,7 +409,7 @@ emit(join(BRAIN, 'index', 'questions.json'), JSON.stringify(askRows, null, 0));
 // and every turn on every machine changes with it.
 const ruleRows = entries.filter((e) => e.rule)
   .sort((a, b) => a.ruleOrder - b.ruleOrder || a.file.localeCompare(b.file))
-  .map((e) => ({ slug: e.file.replace(/\.md$/, ''), order: e.ruleOrder, rule: e.rule }));
+  .map((e) => ({ slug: e.file.replace(/\.md$/, ''), order: e.ruleOrder, rule: e.rule, ...(e.ruleShort ? { short: e.ruleShort } : {}) }));
 emit(join(BRAIN, 'index', 'rules.json'), JSON.stringify({ rules: ruleRows }, null, 2));
 
 const keywordsText = JSON.stringify({ terms: keywords, descriptions: descs }, null, 0);
@@ -458,8 +462,8 @@ function vectorParity() {
   let descChanged = false;
   try {
     const kw = JSON.parse(readFileSync(join(BRAIN, 'index', 'keywords.json'), 'utf8'));
-    const now = descHash(Object.keys(kw.descriptions).sort()
-      .map((s) => s + '\u0000' + kw.descriptions[s]).join('\u0001'));
+    // Since 2026-09-25 the vectors embed the body start too, so a body edit must rebuild them.
+    const now = textHash(BRAIN, kw.descriptions);
     descChanged = storedHash != null && now !== storedHash;
   } catch { /* no keyword index yet */ }
 
@@ -512,4 +516,10 @@ if (CHECK) {
   console.log(`manifest: MANIFEST.md (${Buffer.byteLength(manifestText)} bytes, ~${Math.round(Buffer.byteLength(manifestText) / 4)} tokens)`);
   console.log(`hot list: ${hot.length} active projects`);
   console.log(`orphans (no wikilinks): ${orphans}`);
+  // Topics (index/topics.json, the map's "by topic" view) are grouped from the links and the vectors
+  // just written, so they are rebuilt with them: 0.6 s on 620 memories. A failure never fails the index.
+  try {
+    const t = execFileSync(process.execPath, [join(BRAIN, 'tools', 'build-topics.mjs')], { encoding: 'utf8', timeout: 60000 });
+    console.log(t.trim().split(String.fromCharCode(10)).pop() || 'topics built');
+  } catch (e) { console.error('topics not rebuilt: ' + String(e.message).split('\n')[0]); }
 }

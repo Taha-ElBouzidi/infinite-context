@@ -40,7 +40,7 @@ import { randomBytes, timingSafeEqual, createHash } from 'node:crypto';
 import { execFileSync, execFile } from 'node:child_process';
 // The SAME tokenizer the hook uses, imported rather than reimplemented. Two copies of a tokenizer
 // is two sparse rankings that agree until the day someone edits one of them.
-import { terms as qterms } from './tokenize.mjs';
+import { makeRecall, SHORT_FOLLOW_UP } from './recall-core.mjs';
 import { watchTailnet } from './tailnet-watch.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -296,126 +296,8 @@ async function getEmbedder() {
 // server now DOES learn which memories matched, because it is the thing doing the matching. It
 // previously could not. The audit line below therefore records counts only, never the prompt text
 // and never the memory names.
-let idxCache = null;
-function loadIndexes() {
-  const v = indexVersion();
-  if (idxCache && idxCache.v === v.version) return idxCache;
-  idxCache = {
-    v: v.version,
-    kw: JSON.parse(readFileSync(join(BRAIN, 'index', 'keywords.json'), 'utf8')),
-    emb: JSON.parse(readFileSync(join(BRAIN, 'index', 'embeddings.json'), 'utf8')),
-  };
-  return idxCache;
-}
-
-// Every constant here is measured, and the measurements live in hooks/pre-turn.mjs next to the
-// original. Changing one without re-running tools/eval-recall.mjs is how a tuned system silently
-// detunes itself.
-const RRF_K = 60;
-const SPARSE_MIN = Number(process.env.RECALL_MIN || 0.10);
-const PER_CHANNEL = 20;
-
-async function recall(prompt, queries, limit, bodyChars = 0) {
-  const { kw, emb } = loadIndexes();
-  let qEmb = null;
-  try { qEmb = JSON.parse(readFileSync(join(BRAIN, 'index', 'question-embeddings.json'), 'utf8')); }
-  catch { /* no questions written yet, which is the state every brain starts in */ }
-
-  // DENSE, max-pooled across chunks rather than averaged. Taking the best chunk is the entire
-  // point; a mean reintroduces exactly the dilution that chunking was added to remove.
-  const e = await getEmbedder();
-  const best = new Float64Array(emb.slugs.length).fill(-Infinity);
-  const queryVectors = [];
-  let embedded = 0;
-  for (const q of queries) {
-    const o = await e(String(q).slice(0, 4000), { pooling: 'mean', normalize: true });
-    const qv = o.data;
-    queryVectors.push(qv);
-    embedded++;
-    for (let i = 0; i < emb.slugs.length; i++) {
-      const v = emb.vectors[i];
-      let dot = 0;
-      for (let k = 0; k < v.length; k++) dot += qv[k] * v[k];
-      if (dot > best[i]) best[i] = dot;
-    }
-  }
-  /* THE QUESTIONS A MEMORY ANSWERS ARE SCORED BESIDE ITS DESCRIPTION, and a memory keeps the better
-     of the two. Measured 2026-09-21: "I need to know who did what action" scores 0.144 against the
-     description of the memory that answers it and 0.523 against the question itself; "stop writing
-     so much" 0.216 against 0.622. A description says what a memory is about, which is not what
-     anyone types. Max, never a mean: averaging the two is the dilution this exists to remove.
-     The file is optional, so a brain with no questions written behaves exactly as before. */
-  const qBest = new Map();
-  if (qEmb && qEmb.vectors && qEmb.vectors.length) {
-    // The query vectors are already computed above. Embedding each query a second time here cost a
-    // measured 42 ms a prompt for an identical vector, which is the kind of waste that looks like
-    // the feature being expensive.
-    for (const qv of queryVectors) {
-      for (let i = 0; i < qEmb.vectors.length; i++) {
-        const v = qEmb.vectors[i];
-        let dot = 0;
-        for (let k = 0; k < v.length; k++) dot += qv[k] * v[k];
-        const slug = qEmb.slugs[i];
-        if (dot > (qBest.get(slug) ?? -Infinity)) qBest.set(slug, dot);
-      }
-    }
-  }
-  const denseRanked = embedded
-    ? emb.slugs.map((s, i) => [s, Math.max(best[i], qBest.get(s) ?? -Infinity)])
-      .sort((a, b) => b[1] - a[1]).slice(0, PER_CHANNEL)
-    : [];
-
-  // SPARSE reads the FULL prompt, capped, never a head slice. The hook learned this the hard way:
-  // reusing a 2000-char head returned NOTHING for "how do i log creatine" when 4000 characters of
-  // pasted filler came first, and the owner pastes logs and bank messages constantly.
-  const words = new Set(qterms(String(prompt).slice(0, 20000).toLowerCase()));
-  const score = new Map();
-  for (const w of words) {
-    const slugs = kw.terms[w];
-    if (!slugs) continue;
-    const weight = 1 / slugs.length; // rarer term, stronger signal
-    for (const s of slugs) score.set(s, (score.get(s) || 0) + weight);
-  }
-  const sparseRanked = [...score.entries()]
-    .filter(([, v]) => v >= SPARSE_MIN)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, PER_CHANNEL);
-
-  const fused = new Map();
-  sparseRanked.forEach(([s], r) => fused.set(s, (fused.get(s) || 0) + 1 / (RRF_K + r + 1)));
-  denseRanked.forEach(([s], r) => fused.set(s, (fused.get(s) || 0) + 1 / (RRF_K + r + 1)));
-
-  const bySparse = new Set(sparseRanked.map(([s]) => s));
-  const byDense = new Set(denseRanked.map(([s]) => s));
-  return [...fused.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([slug]) => {
-      const hit = {
-        slug,
-        how: bySparse.has(slug) && byDense.has(slug) ? 'both' : byDense.has(slug) ? 'meaning' : 'keyword',
-        description: kw.descriptions[slug] || '',
-      };
-      /* THE BODY TRAVELS WITH THE HIT WHEN THE CALLER ASKS. The owner, 2026-09-21: "local recall, and
-         local brain copy is not an option." With no copy anywhere, a machine that gets slugs and
-         descriptions has to ask again for the thing it actually needs, 216 ms per memory measured,
-         and an agent under time pressure answers from the description instead. That is the single
-         failure the recall system exists to prevent, so the body comes down with the ranking.
-         Frontmatter is stripped: name and description are already in the hit, and repeating them
-         would spend a fifth of the budget saying what was just said. */
-      if (bodyChars > 0) {
-        try {
-          const raw = readFileSync(join(BRAIN, 'memory', slug + '.md'), 'utf8').replace(/\r\n/g, '\n');
-          const afterFm = raw.startsWith('---') ? raw.slice(Math.max(raw.indexOf('\n---', 3) + 4, 0)) : raw;
-          const body = afterFm.trim();
-          hit.chars = body.length;
-          hit.body = body.slice(0, bodyChars);
-          hit.truncated = body.length > bodyChars;
-        } catch { /* a hit whose file vanished mid-request is still a useful slug */ }
-      }
-      return hit;
-    });
-}
+// The recall itself lives in tools/recall-core.mjs, shared with a local install (2026-09-26).
+const recall = makeRecall({ brain: BRAIN, getEmbedder, indexVersion });
 
 const handler = async (req, res) => {
   const ip = req.socket.remoteAddress || '?';
@@ -952,7 +834,7 @@ const handler = async (req, res) => {
       // 1500 is about 7 KB on the wire and in the agent's context, every turn, on every machine.
       const bodyChars = rp.bodies === false ? 0
         : rp.bodies ? Math.min(Math.max(Number(rp.bodyChars) || 1500, 200), 4000) : 0;
-      const ranked = await recall(prompt, queries, Math.min(Math.max(Number(rp.limit) || 5, 1), 20), bodyChars);
+      const ranked = await recall(prompt, queries, Math.min(Math.max(Number(rp.limit) || 5, 1), 20), bodyChars, rp.limit != null, Math.max(0, Math.min(Number(rp.parts) || 0, 16)), (Number.isInteger(rp.contextIndex) && prompt.trim().length >= SHORT_FOLLOW_UP) ? rp.contextIndex : -1);
       // Counts only. Never the prompt, never the matched slugs.
       audit('RECALL ' + ip + ' q=' + queries.length + ' chars=' + prompt.length
         + ' hits=' + ranked.length + (bodyChars ? ' bodies=' + bodyChars : '') + ' ' + (Date.now() - tr) + 'ms');

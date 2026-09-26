@@ -35,8 +35,8 @@ const STOP = new Set((
   + 'wasnt cant wont im ive id ill youre theyre thats whats lets us them him one two three '
   // CHAT FILLER. Measured 2026-09-23: "btw restart yourself so we can use the new model 5.5"
   // returned five memories and two of them matched on "btw" alone, because several descriptions
-  // quote the owner saying it ("btw we always only use bypass permissions", "btw so you know we work in
-  // morocco"). A word he opens sentences with is not a topic, and here it crowded out the memory
+  // quote the owner saying it ("btw we always only use bypass permissions", "btw the report is due on
+  // friday"). A word he opens sentences with is not a topic, and here it crowded out the memory
   // that actually answered the question. Same class of noise as the stopwords above.
   + 'btw fyi pls plz asap anyway anyways basically actually literally really quite rather maybe '
   + 'perhaps please thanks thank hey hi hello yo lol haha oh ah um uh hmm well right sure fine '

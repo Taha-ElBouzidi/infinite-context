@@ -6,18 +6,20 @@
 // prompt, paid forever, to gain 5 points of recall. Held resident, the same query is about
 // 20ms, which is affordable.
 //
-// It is deliberately trivial: loopback only, one route, no auth, no dependencies beyond the
-// model. It holds nothing secret. If it is not running, the hook falls back to keyword-only and
+// It is deliberately small: loopback only, no auth, no dependencies beyond the model. /embed returns
+// a vector; /recall (2026-09-26) runs the brain server's own recall on this brain. It holds nothing secret. If it is not running, the hook falls back to keyword-only and
 // says so, which is the whole reason the sparse channel was kept.
 //
 // Start:  node tools/embed-server.mjs &
 // Health: curl http://127.0.0.1:8477/health
 
 import { createServer } from 'node:http';
-import { writeFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, unlinkSync, statSync } from 'node:fs';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { pipeline, env } from '@xenova/transformers';
+import { makeRecall, SHORT_FOLLOW_UP } from './recall-core.mjs';
 
 env.allowLocalModels = false;
 
@@ -36,10 +38,46 @@ const t0 = Date.now();
 const embed = await pipeline('feature-extraction', MODEL);
 process.stdout.write(`ready in ${Date.now() - t0}ms on 127.0.0.1:${PORT}\n`);
 
+// The same recall the brain server runs (tools/recall-core.mjs), for a local install with no server.
+// Until 2026-09-26 a local install ranked with a plain top 5 in the hook instead.
+const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const localIndexVersion = () => {
+  const parts = [];
+  for (const f of ['keywords.json', 'embeddings.json']) {
+    try { const st = statSync(join(BRAIN, 'index', f)); parts.push(f + ':' + st.size + ':' + Math.floor(st.mtimeMs)); } catch { /* absent */ }
+  }
+  return { version: parts.join('|') };
+};
+const recall = makeRecall({ brain: BRAIN, getEmbedder: async () => embed, indexVersion: localIndexVersion });
+const norm = (p) => String(p || '').split(String.fromCharCode(92)).join('/').replace(/\/+$/, '').toLowerCase();
+
 const server = createServer(async (req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, model: MODEL }));
+    return res.end(JSON.stringify({ ok: true, model: MODEL, recall: true }));
+  }
+  if (req.method === 'POST' && req.url === '/recall') {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > 400_000) req.destroy(); });
+    req.on('end', async () => {
+      try {
+        const rp = JSON.parse(body || '{}');
+        // Only for the brain this daemon was started from: a second brain folder on the same machine (a
+        // test copy) would otherwise get the first brain's memories.
+        if (norm(rp.brain) !== norm(BRAIN)) { res.writeHead(409, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: 'different brain' })); }
+        const prompt = String(rp.prompt || '');
+        const queries = (Array.isArray(rp.queries) && rp.queries.length ? rp.queries : [prompt]).map(String).slice(0, 24);
+        const parts = Math.max(0, Math.min(Number(rp.parts) || 0, 16));
+        const ctx = (Number.isInteger(rp.contextIndex) && prompt.trim().length >= SHORT_FOLLOW_UP) ? rp.contextIndex : -1;
+        const ranked = await recall(prompt, queries, 5, 0, false, parts, ctx);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ranked }));
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: String(e.message).slice(0, 200) }));
+      }
+    });
+    return;
   }
   if (req.method !== 'POST' || req.url !== '/embed') {
     res.writeHead(404); return res.end();

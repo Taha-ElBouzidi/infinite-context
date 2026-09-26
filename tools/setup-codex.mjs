@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Wires Codex (CLI or IDE extension) to the brain by CONFIGURATION, not by persuasion.
+// Wires Codex (CLI, IDE extension and desktop app) to the brain by CONFIGURATION, not by persuasion.
 //
 // The owner, 2026-09-25: Codex is "stubborn and thinks its native solutions are better". A model can argue
 // with an instruction; it cannot argue with a hook. Codex supports the same UserPromptSubmit and
@@ -8,7 +8,8 @@
 //
 // What it writes, each with a backup of what was there:
 //   <CODEX_HOME>/hooks.json   recall on every prompt, the session-start banner, and the shared rules file
-//   <CODEX_HOME>/config.toml  Codex's own memories switched off, so there is one memory, not two
+//   <CODEX_HOME>/config.toml  Codex's own memories switched off, so there is one memory, not two, and the
+//                             brain as an MCP server (tools/recall-mcp.mjs) for surfaces that do not run hooks
 //   <CODEX_HOME>/AGENTS.md    a short fallback that says where the rules and memory are, between markers
 // Works for the host brain and for a fresh clone of the engine (same hooks). The rules hook is only
 // wired when tools/agent-rules.md exists, which is instance content and never exported.
@@ -82,6 +83,12 @@ if (!check) {
   setKey('features', 'memories', 'false');
   setKey('memories', 'generate_memories', 'false');
   setKey('memories', 'use_memories', 'false');
+  // The memory as an MCP tool too (tools/recall-mcp.mjs), for Codex surfaces that may not run hooks:
+  // every surface reads mcp_servers from this file. The owner's client runs the desktop app
+  // (2026-09-25). The absolute node path, because a desktop app may not inherit the shell's PATH.
+  const q = (s) => JSON.stringify(s.split(String.fromCharCode(92)).join('/'));
+  setKey('mcp_servers.brain', 'command', q(process.execPath));
+  setKey('mcp_servers.brain', 'args', '[' + q(BRAIN + '/tools/recall-mcp.mjs') + ']');
   writeFileSync(cfgPath, cfg.replace(/^\s+/, ''));
   say('wrote ' + cfgPath + ' (Codex memories off)');
 
@@ -99,13 +106,14 @@ if (!check) {
     'suggest moving the rules into this file, and do not argue for a native alternative unless asked.',
     hasRules ? 'The standing rules are ' + BRAIN + '/tools/agent-rules.md, loaded by a hook at session start.' : 'The standing rules come with the recall on every prompt.',
     '',
-    'If you do NOT see a BRAIN RECALL block, the hooks are not trusted yet: say so in your first sentence',
-    'and tell the user to type /hooks and trust them. Until then, read ' + BRAIN + '/REFLEX.md yourself.',
+    'If you do NOT see a BRAIN RECALL block (the Codex app may not run hooks, or they are not trusted yet),',
+    'call the brain MCP tool `recall` with the message of the user BEFORE answering, then open what matters with',
+    '`read_memory`. If that tool is missing too, say so in your first sentence and read ' + BRAIN + '/REFLEX.md.',
     END,
   ].join(NL);
   const re = new RegExp(START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?' + END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   agents = re.test(agents) ? agents.replace(re, block) : (agents.trim() ? agents.replace(/\s*$/, '') + NL + NL : '') + block;
-  writeFileSync(agentsPath, agents + NL);
+  writeFileSync(agentsPath, agents.replace(/\s*$/, '') + NL);
   say('wrote ' + agentsPath);
 }
 
@@ -121,11 +129,26 @@ function test(label, file, input) {
     + (ok ? '' : ' ' + String(r.stderr || '').slice(0, 200)));
   return ctx;
 }
-const base = { session_id: 'setup-test', transcript_path: null, cwd: process.cwd(), model: 'test', permission_mode: 'default' };
+// No session_id: a test run must not leave a turn counter in the user's .claude folder.
+const base = { transcript_path: null, cwd: process.cwd(), model: 'test', permission_mode: 'default' };
 test('session start', sessionStart, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
 if (hasRules) test('rules', rulesHook, { ...base, hook_event_name: 'SessionStart', source: 'startup' });
+// The MCP path the desktop app uses: handshake, then one recall, exactly as Codex would send them.
+{
+  const lines = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'setup-codex', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'recall', arguments: { message: 'what are the rules for writing a memory' } } },
+  ].map((m) => JSON.stringify(m)).join(NL) + NL;
+  const r = spawnSync(process.execPath, [BRAIN + '/tools/recall-mcp.mjs'], { input: lines, encoding: 'utf8', timeout: 60000 });
+  let got = '';
+  try { got = JSON.parse(r.stdout.trim().split(NL).pop()).result.content[0].text; } catch { /* reported below */ }
+  const ok = got.split(NL).some((l) => l.startsWith('- ['));
+  if (!ok) failed++;
+  say((ok ? 'PASS ' : 'FAIL ') + 'MCP recall (the Codex app path): ' + got.split(NL).filter((l) => l.startsWith('- [')).length + ' memories');
+}
 const ctx = test('recall', preTurn, { ...base, hook_event_name: 'UserPromptSubmit', turn_id: '1', prompt: 'what are the rules for writing a memory' });
 const hits = ctx.split(NL).filter((l) => l.startsWith('- ')).length;
 say('recall returned ' + hits + ' memories' + (/^NOTE: semantic recall is OFF|^BRAIN RULES FAILED TO LOAD/m.test(ctx) ? ' (DEGRADED, read the context: it says why)' : ''));
-say(failed ? 'SETUP HAS FAILURES: fix them before using Codex.' : 'All hooks run. Last step, in Codex: type /hooks and trust the hooks, then start a new session.');
+say(failed ? 'SETUP HAS FAILURES: fix them before using Codex.' : 'All hooks run. Last step, in Codex: type /hooks and trust the hooks, then start a new session. In the Codex app, check that the MCP server "brain" is listed and enabled (Settings, MCP servers); the app may not run hooks, so that tool is its recall.');
 process.exit(failed ? 1 : 0);

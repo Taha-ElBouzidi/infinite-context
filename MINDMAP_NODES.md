@@ -18,7 +18,7 @@ type: <user | contact | project | feedback | reference>
 <body: one fact per line>
 ```
 
-- `name` is the node label. A title with spaces is kept as written. A kebab-slug has its type prefix stripped and is title-cased (so `project_mahara` shows as "Mahara").
+- `name` is the node label. A title with spaces is kept as written. A kebab-slug has its type prefix stripped and is title-cased (so `project_a client product` shows as "a client product").
 - `description` is a one line summary for recall. It does not change the graph shape.
 
 ## Where the node lands (regions)

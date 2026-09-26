@@ -2,7 +2,7 @@
 // REAL pull result (no false "synced" on failure), and report brain health.
 // Injects a short note as additionalContext. Fails open and never blocks a session.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname } from 'node:os';
@@ -47,11 +47,11 @@ const BRAIN = [process.env.HAVOK_BRAIN, marked, HERE].find(isBrainRepo) || HERE;
 // brain". One brain, on the server. So memory/ is empty there by design, and every git-shaped and
 // verify-shaped check below was reporting that design as a fault: four warnings at every session
 // start of a healthy machine, which teaches its agents to skip the banner, and then the one banner
-// that matters is skipped too (measured on PC-MA1-641, 2026-09-22).
+// that matters is skipped too (measured on the locked-down client machine, 2026-09-22).
 //
 // Counted from the DISK rather than read from a marker or a DISABLED- remote, because the rule
 // applies to any machine holding no memories however it got that way, and because the remote lies:
-// on PC-MA1-641 origin pointed at a migration bundle, so the git block below would have cheerfully
+// on the locked-down client machine origin pointed at a migration bundle, so the git block below would have cheerfully
 // restored memory/MEMORY.md, index/ and MANIFEST.md, putting the brain back on a company laptop at
 // every session start.
 const memDir = join(BRAIN, 'memory');
@@ -510,6 +510,19 @@ if (!hp.ok || hp.out !== 'hooks/git') {
   if (set.ok) notes.push('Armed the brain git pre-commit gate on this machine (core.hooksPath).');
 }
 
+// Methods are memories, not skills. The owner, 2026-09-26: "skills shouldn't be triggered like a skill
+// that you follow point for point, they should be memory on how to do stuff, indirectly." Plugin 0.3.13
+// installed the kit as skills for a few hours; this removes any folder that installer wrote (it left a
+// .installed-by-brain marker in each), and never touches a skill the owner installed himself.
+try {
+  const skillsDir = resolve(homedir(), '.claude', 'skills');
+  if (existsSync(skillsDir)) {
+    const ours = readdirSync(skillsDir).filter((n) => existsSync(resolve(skillsDir, n, '.installed-by-brain')));
+    for (const n of ours) rmSync(resolve(skillsDir, n), { recursive: true, force: true });
+    if (ours.length) notes.push('Removed ' + ours.length + ' starter-kit skill folder(s): methods are how-to memories now, found by recall.');
+  }
+} catch { /* never block a session over this */ }
+
 // Brain health. This replaced the open-PR queue on 2026-07-26, when the PR requirement was
 // dropped in favour of verification: the whole brain is directly editable and `verify.mjs`
 // is the gate. A stale PR count told an agent nothing actionable; a red brain does.
@@ -519,7 +532,7 @@ if (!hp.ok || hp.out !== 'hooks/git') {
 // no local model, an index repaired from the server, no brain.json. Skip it, say why.
 const vr = serverOnly ? { ok: true, out: '' } : tryRun('node "' + BRAIN.split(String.fromCharCode(92)).join('/') + '/tools/verify.mjs" --quiet', 25000);
 const prLine = serverOnly
-  ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on the host and on every server write.'
+  ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on SERVER and on every server write.'
   : vr.ok ? 'Brain verify PASSED.' : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
 if (!vr.ok) {
   notes.push('Brain verification is failing. Fix before making other changes:');

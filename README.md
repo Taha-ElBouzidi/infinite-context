@@ -155,19 +155,26 @@ Your numbers will differ. Measure them: `node tools/eval-recall.mjs` and `node t
 **Memories are markdown files**, one fact per file, under `memory/`. Plain text, yours, diffable,
 grep-able. Nothing is hidden in a database.
 
-**Only the description is indexed.** Each memory has a one-line `description`, written in the words
-a person would type when looking for it. That line, and the slug, are the entire retrieval surface.
-A memory with a vague description exists and cannot be found, which is by design: it forces the
-author to say what the memory is *for*.
+**The description leads.** Each memory has a one-line `description`, written in the words a person
+would type when looking for it. The index covers the name, that line and the first 1,200 characters of
+the memory, and the description is what the agent sees in the recall list. A memory with a vague
+description is hard to find, which is by design: it forces the author to say what the memory is *for*.
 
 **Recall returns pointers, not text.** Injecting five whole memories into every prompt to save one
 file read is the wrong trade. The agent reads what it needs, and reads it fresh.
 
-**Two channels, fused.** Keyword matching always works and catches exact names. Semantic matching,
-when the local embedder runs, catches paraphrases keyword cannot. Both are on your machine.
+**Two channels, fused, then a threshold and the links.** Keyword matching always works and catches
+exact names. Semantic matching, when the local embedder runs, catches paraphrases keyword cannot. There
+is no fixed number of results: every memory that clears its own bar comes back, plus the memories
+linked to them with `[[file-name]]` that clear a lower bar of their own. A question that needs two
+memories usually finds the second through a link. Everything runs on your machine.
+
+**Methods are memories too.** How to make a deck, research with sources, debug, review work before
+calling it done, run a meeting, set a goal: 14 how-to memories ship, found by recall when the
+conversation needs them, not triggered like scripts. Write your own the same way.
 
 **Behaviour rules are memories too.** Any memory carrying a `rule:` line is injected on every turn.
-Five generic ones ship. Add your own by writing a memory. Change one by editing a file.
+Eight generic ones ship. Add your own by writing a memory. Change one by editing a file.
 
 **It degrades loudly.** If the index is missing, the embedder is down, or a file cannot be opened,
 the agent is told so in its context, in words, rather than silently answering from less.
@@ -197,6 +204,32 @@ node tools/analytics.mjs       # results sheet from every logged call, with aler
 | [AGENTS.md](AGENTS.md) | for the agent installing it |
 | [.project/DECISIONS.md](.project/DECISIONS.md) | why it is built this way |
 
+## Using it with other assistants
+
+The memory is not tied to one tool. One command finds the assistants on the machine and connects each:
+
+```
+node tools/setup-agents.mjs            add --check to see what it would do first
+```
+
+Every assistant gets the memory as an MCP server named `brain` (tools `recall` and `read_memory`,
+read-only), and a short instruction to call `recall` before answering, in whichever file it reads.
+Claude Code, Codex, Gemini CLI and Antigravity also get the automatic recall on every prompt, Cursor gets the
+rules at session start, and Cline gets the automatic recall on macOS and Linux.
+
+| Assistant | What it gets |
+|---|---|
+| Claude Code | MCP, CLAUDE.md, automatic recall |
+| Codex (CLI, IDE, app) | MCP, AGENTS.md, automatic recall |
+| Claude Desktop, LM Studio, Continue | MCP (add "call recall first" to their system prompt or project) |
+| Gemini CLI, Antigravity | MCP, instruction file, automatic recall |
+| Cursor | MCP, rules at session start |
+| VS Code Copilot, Cline, Windsurf | MCP and their instruction file (Cline: automatic recall on macOS and Linux) |
+
+Every file is backed up before it changes, your other servers are kept, and running it again changes
+nothing. Restart each assistant afterwards; the first call may ask you to approve `recall`.
+Not covered: plain Ollama (no MCP support) and Open WebUI (needs mcpo in front).
+
 ## Using it with Codex
 
 The recall hook is not Claude-only. OpenAI Codex (the CLI and the IDE extension) has the same
@@ -224,7 +257,9 @@ Why hooks and not instructions: an agent told to use a memory system it did not 
 argue for its own. A hook is configuration, so there is nothing to argue with.
 
 The Codex desktop app ignores the memories setting in `config.toml`; turn memories off in its
-Settings, under Personalization.
+Settings, under Personalization. The app may also not run hooks, so the setup registers the memory as an
+MCP server too (`tools/recall-mcp.mjs`, tools `recall` and `read_memory`) and tells Codex to call it when
+no recall block appears. In the app, check that the MCP server `brain` is listed and enabled.
 
 ## Multi-machine mode
 

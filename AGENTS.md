@@ -27,7 +27,7 @@ If Node is missing, stop and tell the person. Do not install it without asking.
 node tools/init.mjs
 ```
 
-Verify: the output contains `rules now active : 5` and `semantic recall  : ON`. If rules say 0, stop; the index did not build. If semantic says OFF, `npm install` failed: tell the person, then continue, keyword recall still works.
+Verify: the output contains `rules now active : 8` and `semantic recall  : ON`. If rules say 0, stop; the index did not build. If semantic says OFF, `npm install` failed: tell the person, then continue, keyword recall still works.
 
 **2. Wire it into Claude Code.**
 

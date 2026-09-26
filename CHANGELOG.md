@@ -2,6 +2,38 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.0
+
+- **Recall without a fixed count, on every install.** Every memory that clears its own bar comes back,
+  plus memories linked to them that clear a lower bar, and the meaning index covers the start of each
+  memory's text, not only its description. The same code (`tools/recall-core.mjs`) now runs in the
+  brain server and in a local install, where `tools/embed-server.mjs` answers `/recall`; before this a
+  local install ranked with a plain top 5. Measured on one user's real questions: questions needing
+  two memories fully answered went from 31 to 75 of 115 against the old top 5, and single questions
+  from 126 to 145 of 167. A linked memory must also reach 1.2 times an even share of activation, so a new
+  22-memory brain returns about 6 memories for a trivial question instead of 15, with no change on a
+  632-memory brain.
+- **Methods are memories.** `kit/memory` holds 14 how-to memories (decks, printable documents,
+  writing, research with sources, sub-agent briefs and model choice, saving a memory, plan and verify,
+  systematic debugging adapted from obra/superpowers under MIT, review before done, goals, meetings and
+  follow-ups, new projects, assistant setup, turning a repeated task into a method), seeded by
+  `tools/init.mjs`, with templates in `kit/files`. Benchmarked against the same content as native
+  skills (36 requests, blind grading): the right method was used 26 of 28 times against 24, quality tied.
+- **Eight starting rules**, each with a one-line short form used between full reminders: model choice,
+  sub-agent briefs and one fact per memory join the first five.
+- **Any assistant.** `tools/setup-agents.mjs` registers the memory as an MCP server (`recall`,
+  `read_memory`) in Claude Code, Claude Desktop, Codex (CLI, IDE, app), Gemini CLI, Antigravity, Cursor,
+  VS Code Copilot, Cline, Windsurf, LM Studio and Continue, writes the instruction where each reads it,
+  and wires automatic recall where the assistant has a hook (`tools/hook-adapter.mjs` translates Gemini
+  CLI, Antigravity, Cursor and Cline formats).
+- **The Codex desktop app** gets recall through the MCP server when it does not run hooks
+  (`tools/recall-mcp.mjs`, registered by `tools/setup-codex.mjs`).
+- **Memory hygiene.** `tools/neuron-check.mjs` checks a draft for duplicates and suggests links, with a
+  local model when no server runs; `tools/replace-memory.mjs` retires an outdated memory into
+  `deleted/` on a local install; `reflect.mjs` now flags links written by display name, which recall
+  cannot follow.
+- `tools/build-topics.mjs` groups memories into named topics from their links and meaning, rebuilt with
+  the index into `index/topics.json`.
 ## 0.3.0
 
 - **Codex.** `tools/setup-codex.mjs` connects OpenAI Codex (CLI and IDE extension) to the same memory.

@@ -11,7 +11,7 @@ estimated.
 The authors' own brain: **274 memories**, and a fixed set of **41 questions** phrased the way the
 owner actually types, including terse and misspelled ones, each with the memory that should come
 back. A benchmark written in tidy English measures a system nobody uses. The set is private, because
-the questions name real people; a generic set targeting the five seed rules ships with the code and
+the questions name real people; a generic set of 22 questions targeting the eight seed rules and the 14 how-to memories ships with the code and
 `eval-recall.mjs` uses it when no private set is present.
 
 Machine: a desktop, Windows 11, Node 24. Every run below is the real hook end to end, the way a

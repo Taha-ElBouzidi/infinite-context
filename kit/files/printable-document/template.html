@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Document Title</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fraunces:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   A4 portrait document template.
+   Chrome: Ctrl+P, A4, Portrait, Margins NONE, Background graphics ON.
+   Re-theme by changing the CSS variables at :root. Layout stays identical.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+@page { size: A4; margin: 0 }
+* { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; box-sizing: border-box }
+
+:root {
+  --ink-900: #0B1120;
+  --ink-700: #1F2937;
+  --ink-500: #475569;
+  --ink-300: #94A3B8;
+  --line: #E2E8F0;
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --accent: #1D4ED8;
+  --accent-soft: #EEF2FF;
+  --amber: #B45309;
+  --amber-soft: #FEF3C7;
+  --green: #047857;
+  --green-soft: #D1FAE5;
+  --red: #B91C1C;
+  --red-soft: #FEF2F2;
+  --gold: #F59E0B;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #E2E8F0;
+  font-family: 'Inter', system-ui, sans-serif;
+  color: var(--ink-900);
+  font-size: 10.5pt;
+  line-height: 1.55;
+  hyphens: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media screen {
+  html, body { padding: 20px 0 }
+  .page { margin: 16px auto; box-shadow: 0 8px 32px rgba(15,23,42,0.18); border-radius: 4px }
+}
+
+@media print {
+  html, body {
+    background: #fff !important;
+    width: 210mm;
+    overflow: visible !important;
+  }
+  .no-print { display: none !important }
+  section.page {
+    width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    padding: 18mm 18mm 22mm 18mm !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    page-break-after: always;
+    break-after: page;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    box-shadow: none !important;
+    border: none !important;
+  }
+  section.page:last-of-type { page-break-after: avoid; break-after: avoid }
+  section.page.cover { padding: 28mm 22mm !important }
+  .phase, .callout, .ask-card, .stat, .ba-col, .section-header, .doc-to-from, .sig-block {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  h1, h2, h3, h4 { page-break-after: avoid; break-after: avoid }
+}
+
+/* --- Typography --- */
+h1, h2, h3, h4 { font-family: 'Fraunces', Georgia, serif; font-weight: 600; color: var(--ink-900); margin: 0 }
+h1 { font-size: 34pt; line-height: 1.08; letter-spacing: -0.015em }
+h2 { font-size: 20pt; line-height: 1.15; letter-spacing: -0.01em }
+h3 { font-family: 'Inter', sans-serif; font-size: 11pt; line-height: 1.3; font-weight: 700 }
+h4 {
+  font-family: 'Inter', sans-serif;
+  font-size: 9pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: 2mm;
+}
+p { margin: 0 0 3mm 0 }
+p.lead { font-size: 11pt; color: var(--ink-700); line-height: 1.5 }
+em { font-style: italic; color: var(--ink-900) }
+strong { color: var(--ink-900); font-weight: 600 }
+code {
+  font-family: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  font-size: 9pt;
+  background: var(--bg);
+  padding: 0.5mm 2mm;
+  border-radius: 2px;
+  color: var(--accent);
+}
+
+/* --- Page container --- */
+section.page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 18mm 18mm 22mm 18mm;
+  background: var(--surface);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+section.page .content-fill { flex: 1 1 auto }
+section.page .page-number,
+section.page .page-footer-label {
+  position: absolute;
+  bottom: 10mm;
+  font-size: 8pt;
+  color: var(--ink-300);
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
+section.page .page-number { right: 18mm }
+section.page .page-footer-label { left: 18mm; text-transform: uppercase }
+
+/* --- Cover page (dark gradient) --- */
+section.page.cover {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(29, 78, 216, 0.22), transparent 48%),
+    radial-gradient(circle at 82% 85%, rgba(245, 158, 11, 0.16), transparent 48%),
+    linear-gradient(180deg, #0B1120 0%, #1E293B 100%);
+  color: #fff;
+  padding: 28mm 22mm;
+}
+section.page.cover h1 { color: #fff; font-size: 40pt; max-width: 150mm }
+section.page.cover .brandmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Fraunces', serif;
+  font-size: 14pt;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 6mm;
+}
+section.page.cover .brandmark .dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: linear-gradient(135deg, #60A5FA, var(--gold));
+}
+section.page.cover .kicker {
+  color: #93C5FD;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 9pt;
+  margin-bottom: 12mm;
+}
+section.page.cover .intro {
+  color: rgba(255,255,255,0.78);
+  font-size: 12pt;
+  max-width: 140mm;
+  margin-top: 10mm;
+  line-height: 1.5;
+}
+section.page.cover .divider {
+  height: 1px;
+  background: rgba(255,255,255,0.15);
+  margin: 14mm 0 8mm;
+}
+section.page.cover .meta {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6mm;
+  margin-top: 8mm;
+  color: rgba(255,255,255,0.6);
+  font-size: 9pt;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+section.page.cover .meta strong {
+  display: block;
+  color: #fff;
+  font-size: 11pt;
+  margin-top: 2mm;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+section.page.cover .example-tag {
+  display: inline-block;
+  margin-top: 14mm;
+  padding: 3mm 6mm;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  font-size: 9pt;
+  color: rgba(255, 255, 255, 0.85);
+  letter-spacing: 0.04em;
+}
+section.page.cover .example-tag b { color: #FCD34D; font-weight: 600 }
+section.page.cover .cover-footer {
+  position: absolute;
+  bottom: 14mm;
+  left: 22mm;
+  right: 22mm;
+  display: flex;
+  justify-content: space-between;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 8.5pt;
+  letter-spacing: 0.04em;
+}
+
+/* --- Section header --- */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 5mm;
+  margin-bottom: 6mm;
+  border-bottom: 1px solid var(--line);
+}
+.section-header .section-index {
+  font-family: 'Fraunces', serif;
+  font-size: 28pt;
+  font-weight: 500;
+  color: var(--accent);
+  line-height: 1;
+}
+.section-header h2 { margin: 0 }
+
+/* --- Memo metadata (To/From/Subject bar) --- */
+.doc-to-from {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1mm 10mm;
+  font-size: 9.5pt;
+  margin: 4mm 0 6mm 0;
+  border-left: 2pt solid var(--gold);
+  padding-left: 8mm;
+}
+.doc-to-from .label {
+  color: var(--ink-500);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 8pt;
+}
+.doc-to-from .value { color: var(--ink-900) }
+
+/* --- Before / after comparison --- */
+.ba-table {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5mm;
+  margin: 4mm 0 5mm 0;
+}
+.ba-col { padding: 6mm 7mm; border-radius: 3pt }
+.ba-col.before { background: var(--red-soft); border-left: 3pt solid var(--red) }
+.ba-col.after { background: var(--green-soft); border-left: 3pt solid var(--green) }
+.ba-col h3 { font-size: 8.5pt; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 3mm }
+.ba-col.before h3 { color: #991B1B }
+.ba-col.after h3 { color: #065F46 }
+.ba-col ul { margin: 0; list-style: none; padding: 0 }
+.ba-col li {
+  font-size: 9pt;
+  padding: 1.5mm 0;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  line-height: 1.4;
+  color: var(--ink-700);
+}
+.ba-col li:last-child { border-bottom: none }
+
+/* --- 4-up stat grid --- */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4mm;
+  margin: 4mm 0;
+}
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3pt;
+  padding: 5mm 3mm;
+  text-align: center;
+}
+.stat .value {
+  font-family: 'Fraunces', serif;
+  font-size: 18pt;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+.stat .label {
+  font-size: 7.5pt;
+  color: var(--ink-500);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-top: 2mm;
+  font-weight: 600;
+}
+
+/* --- Callouts --- */
+.callout {
+  padding: 4mm 6mm;
+  border-radius: 3pt;
+  margin: 4mm 0;
+  font-size: 9.5pt;
+  line-height: 1.5;
+}
+.callout.info    { background: var(--accent-soft); border-left: 3pt solid var(--accent); color: #1E3A8A }
+.callout.warn    { background: var(--amber-soft); border-left: 3pt solid var(--amber); color: #92400E }
+.callout.success { background: var(--green-soft); border-left: 3pt solid var(--green); color: #065F46 }
+.callout.danger  { background: var(--red-soft); border-left: 3pt solid var(--red); color: #991B1B }
+.callout strong { color: inherit; display: block; margin-bottom: 1mm; letter-spacing: 0.04em; text-transform: uppercase; font-size: 8.5pt }
+
+/* --- Phase block (numbered card with header + body + save-box) --- */
+.phase {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3pt;
+  padding: 5mm 7mm;
+  margin-bottom: 4mm;
+}
+.phase-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2mm;
+  margin-bottom: 3mm;
+}
+.phase-header .title { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 10.5pt }
+.phase-header .title .num {
+  color: var(--gold);
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  margin-right: 6pt;
+}
+.phase-header .time {
+  font-size: 8pt;
+  color: var(--ink-500);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.phase > p { font-size: 9.5pt; color: var(--ink-700); margin-bottom: 2mm }
+.phase ol { margin: 0; padding-left: 14pt }
+.phase ol li {
+  font-size: 9.5pt;
+  line-height: 1.5;
+  margin-bottom: 1.5mm;
+  color: var(--ink-700);
+}
+.phase ol li strong { color: var(--ink-900) }
+.phase .save-box {
+  background: var(--green-soft);
+  border: 1px dashed var(--green);
+  padding: 3mm 5mm;
+  margin-top: 3mm;
+  border-radius: 2pt;
+  font-size: 8.5pt;
+  color: var(--ink-700);
+  line-height: 1.45;
+}
+.phase .save-box strong {
+  color: var(--green);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 8pt;
+  margin-right: 4pt;
+}
+
+/* --- Settings mini-table --- */
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 2mm 0 3mm 0;
+  font-size: 8.5pt;
+}
+.settings-table td {
+  padding: 1.8mm 5pt;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.settings-table td:first-child {
+  color: var(--ink-500);
+  width: 45mm;
+  font-weight: 600;
+}
+.settings-table td:last-child { color: var(--ink-900) }
+.settings-table tr:last-child td { border-bottom: none }
+
+/* --- Ask cards (3-up decisions) --- */
+.ask-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4mm;
+  margin: 4mm 0;
+}
+.ask-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3pt;
+  padding: 5mm 6mm;
+}
+.ask-card .num {
+  font-family: 'Fraunces', serif;
+  font-size: 20pt;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1;
+}
+.ask-card h3 { font-size: 10pt; margin: 2mm 0 1mm 0 }
+.ask-card p { font-size: 8.5pt; color: var(--ink-500); line-height: 1.4; margin: 0 }
+
+/* --- Timeline table (labeled-step rows) --- */
+.timeline-table { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm 0 }
+.timeline-table td {
+  padding: 3mm 4mm;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  font-size: 9.5pt;
+}
+.timeline-table td:first-child {
+  width: 40mm;
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 8.5pt;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.timeline-table tr:last-child td { border-bottom: none }
+
+/* --- Signature block (2-up at end of doc) --- */
+.sig-block {
+  margin-top: 10mm;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14mm;
+}
+.sig-line {
+  border-top: 1pt solid var(--ink-900);
+  padding-top: 2mm;
+  font-size: 8.5pt;
+  color: var(--ink-500);
+}
+.sig-line .name {
+  font-size: 10.5pt;
+  color: var(--ink-900);
+  font-weight: 600;
+  margin-bottom: 1mm;
+  font-family: 'Inter', sans-serif;
+}
+
+/* --- Clean bullet list with colored dots --- */
+ul.clean-list { list-style: none; padding-left: 0; margin: 3mm 0 }
+ul.clean-list li {
+  padding-left: 6mm;
+  position: relative;
+  margin-bottom: 1.5mm;
+  font-size: 9.5pt;
+  color: var(--ink-700);
+  line-height: 1.5;
+}
+ul.clean-list li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2mm;
+  width: 2.5mm;
+  height: 2.5mm;
+  border-radius: 50%;
+  background: var(--accent);
+}
+</style>
+</head>
+<body>
+
+<!-- Print-setting reminder, hidden on print -->
+<div class="no-print" style="text-align:center;padding:12pt 16pt;background:#fef3c7;max-width:210mm;margin:0 auto 16pt;border-radius:4pt;font-size:11pt;color:#334155;font-family:Inter,sans-serif;border:2pt solid #f59e0b">
+  <strong>Print settings (IMPORTANT):</strong> Chrome Ctrl+P, then Paper: <strong>A4</strong>, Layout: <strong>Portrait</strong>, Margins: <strong>None</strong>, Background graphics: <strong>ON</strong>. Save as PDF.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 1, COVER
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page cover">
+  <div class="brandmark">
+    <span class="dot"></span>
+    BRAND NAME
+  </div>
+  <div class="kicker">Document kind, audience, classification</div>
+  <h1>Document title,<br>two lines at most.</h1>
+  <p class="intro">
+    One short paragraph that frames the document. What it is, why it exists, what action it asks of the reader. Two to four sentences, no more.
+  </p>
+  <div class="divider"></div>
+  <div class="meta">
+    <div>From<strong>Author, role</strong></div>
+    <div>To<strong>Recipient, role</strong></div>
+    <div>Date<strong>DD Month YYYY</strong></div>
+  </div>
+  <span class="example-tag">Reading time, <b>approximately 10 minutes</b></span>
+  <div class="cover-footer">
+    <span>Internal, confidential</span>
+    <span>Page 01 / 04</span>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 2, EXECUTIVE SUMMARY + BODY SECTION
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <div class="content-fill">
+    <div class="section-header">
+      <span class="section-index">01</span>
+      <h2>Executive summary</h2>
+    </div>
+
+    <div class="doc-to-from">
+      <div class="label">Subject</div><div class="value">One-line subject</div>
+      <div class="label">Status</div><div class="value">Ready to start, pending sign-off</div>
+      <div class="label">Budget</div><div class="value">~$X / month</div>
+      <div class="label">Timeline</div><div class="value">N weeks to complete</div>
+    </div>
+
+    <p class="lead">
+      The lead paragraph sets up the whole document. Two or three sentences that an executive can read in fifteen seconds and come away knowing the main point. Do not bury the action ask here.
+    </p>
+
+    <div class="section-header" style="margin-top: 8mm">
+      <span class="section-index">02</span>
+      <h2>Section heading</h2>
+    </div>
+
+    <p>Regular body paragraph. Short sentences. Active voice. Specific numbers.</p>
+
+    <ul class="clean-list">
+      <li><strong>Key point one.</strong> One sentence of substance, no filler.</li>
+      <li><strong>Key point two.</strong> Specific and concrete.</li>
+      <li><strong>Key point three.</strong> Numbers where possible.</li>
+    </ul>
+
+    <div class="callout info">
+      <strong>The point.</strong> Use callouts to frame the non-obvious conclusion a reader should take away from the section above.
+    </div>
+  </div>
+
+  <div class="page-footer-label">Document short name, Internal</div>
+  <div class="page-number">Page 02 / 04</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 3, BEFORE/AFTER + STATS
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <div class="content-fill">
+    <div class="section-header">
+      <span class="section-index">03</span>
+      <h2>Comparison section title.</h2>
+    </div>
+
+    <div class="ba-table">
+      <div class="ba-col before">
+        <h3>Current state</h3>
+        <ul>
+          <li>First fact about today</li>
+          <li>Second fact</li>
+          <li>Third fact</li>
+          <li>Fourth fact</li>
+        </ul>
+      </div>
+      <div class="ba-col after">
+        <h3>Target state</h3>
+        <ul>
+          <li>First improvement</li>
+          <li>Second improvement</li>
+          <li>Third improvement</li>
+          <li>Fourth improvement</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="section-header" style="margin-top: 8mm">
+      <span class="section-index">04</span>
+      <h2>Numbers that matter.</h2>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat"><div class="value">$X</div><div class="label">Headline cost</div></div>
+      <div class="stat"><div class="value">N</div><div class="label">Unit measure</div></div>
+      <div class="stat"><div class="value">~T</div><div class="label">Time measure</div></div>
+      <div class="stat"><div class="value">P%</div><div class="label">Probability</div></div>
+    </div>
+
+    <div class="callout warn">
+      <strong>Reversibility.</strong> Short paragraph explaining that the decision is not irreversible, what the exit looks like, what is truly at stake.
+    </div>
+  </div>
+
+  <div class="page-footer-label">Document short name, Internal</div>
+  <div class="page-number">Page 03 / 04</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PAGE 4, TIMELINE + ASK + SIGN-OFF
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="page">
+  <div class="content-fill">
+    <div class="section-header">
+      <span class="section-index">05</span>
+      <h2>Timeline and sign-off.</h2>
+    </div>
+
+    <h4>Four steps to delivery</h4>
+    <table class="timeline-table">
+      <tr><td>Step 1, label</td><td><strong>Headline.</strong> One or two sentences of substance.</td></tr>
+      <tr><td>Step 2, label</td><td><strong>Headline.</strong> One or two sentences.</td></tr>
+      <tr><td>Step 3, label</td><td><strong>Headline.</strong> One or two sentences.</td></tr>
+      <tr><td>Step 4, label</td><td><strong>Headline.</strong> One or two sentences.</td></tr>
+    </table>
+
+    <h4 style="margin-top: 6mm">The ask</h4>
+    <div class="ask-grid">
+      <div class="ask-card">
+        <div class="num">01</div>
+        <h3>First decision</h3>
+        <p>One-sentence explanation of what you need signed off.</p>
+      </div>
+      <div class="ask-card">
+        <div class="num">02</div>
+        <h3>Second decision</h3>
+        <p>One-sentence explanation.</p>
+      </div>
+      <div class="ask-card">
+        <div class="num">03</div>
+        <h3>Third decision</h3>
+        <p>One-sentence explanation.</p>
+      </div>
+    </div>
+
+    <div class="sig-block">
+      <div class="sig-line">
+        <div class="name">Author name</div>
+        Role, Organization
+      </div>
+      <div class="sig-line">
+        <div class="name">Recipient name</div>
+        Role, signing off
+      </div>
+    </div>
+  </div>
+
+  <div class="page-footer-label">Document short name, Internal</div>
+  <div class="page-number">Page 04 / 04</div>
+</section>
+
+</body>
+</html>

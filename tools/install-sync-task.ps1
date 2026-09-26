@@ -36,7 +36,7 @@ if (-not (Test-Path $token)) {
 # doubling them would produce a path that does not exist. A doubled quote IS one literal quote,
 # which is how both paths survive having spaces in them.
 #
-# THE BAKED NODE PATH HAS TO SURVIVE BEING COPIED TO ANOTHER MACHINE. PC-MA1-641, 2026-09-18: the
+# THE BAKED NODE PATH HAS TO SURVIVE BEING COPIED TO ANOTHER MACHINE. the locked-down client machine, 2026-09-18: the
 # migration carried this .vbs over from the old laptop, where node sat in a WinGet package folder.
 # The new PC has the Node MSI in C:\Program Files\nodejs, so the baked path did not exist, and
 # wscript reports a missing file as a MODAL DIALOG. the owner got a Windows Script Host error box every
