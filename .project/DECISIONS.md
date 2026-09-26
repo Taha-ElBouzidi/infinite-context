@@ -179,3 +179,16 @@ That is a 0.3.0 item, not a find-and-replace.
 prove the product works.
 
 **Decider:** Repository owner, delegated to the maintaining agent on 2026-09-06.
+
+## [2026-09-26] Three long-lived branches, staging, main and prod; one version number everywhere
+
+**Context:** the maintainer runs every other project on staging, main, prod, and found the public repo's
+main plus develop "not well structured", and the host's plugin carrying a different version (0.3.15)
+from the release (0.4.0), which made it impossible to tell at a glance whether both sides matched.
+
+**Decision:** `staging` replaces `develop` as the integration branch, `main` is the release candidate,
+`prod` holds released versions and is the default branch. A release moves all three to the same commit
+and tags it. The release version and the host plugin version are kept equal: between releases the
+plugin takes patch bumps (0.4.1, 0.4.2), and the next release uses the plugin's version.
+
+**Supersedes:** the 2026-09-05 decision of main and develop.

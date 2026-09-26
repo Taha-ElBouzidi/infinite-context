@@ -2,6 +2,12 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.1
+
+- **Branches: staging, main, prod.** `staging` replaces `develop` and is where pull requests land, `main`
+  is the release candidate, `prod` holds released versions and is now the default branch you clone. The
+  contributing guide, workflow and pull request template say so. No code changes.
+
 ## 0.4.0
 
 - **Recall without a fixed count, on every install.** Every memory that clears its own bar comes back,

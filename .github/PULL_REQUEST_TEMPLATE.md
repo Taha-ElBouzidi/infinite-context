@@ -1,4 +1,4 @@
-<!-- Target branch: develop. main only receives releases. -->
+<!-- Target branch: staging. main and prod only receive releases. -->
 
 ## What changed
 

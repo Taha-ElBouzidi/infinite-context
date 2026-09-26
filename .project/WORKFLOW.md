@@ -5,20 +5,22 @@
 ## Branch Structure
 
 ```
-main                 <- STABLE. What users clone. Every commit passes the release gate. Tagged releases.
-  ^  merged from develop when a release is cut
-develop              <- INTEGRATION. Where pull requests land. Always passes verify.mjs.
+prod                 <- RELEASED. The default branch, what users clone. Moves only at a release, tagged.
+  ^  promoted from main when a release is cut
+main                 <- RELEASE CANDIDATE. Passes the release gate (clean install, leak scan, verify).
+  ^  promoted from staging
+staging              <- INTEGRATION. Where pull requests land. Always passes verify.mjs.
   ^
-feature/*  fix/*     <- short-lived work branches, one task each, from develop
-hotfix/*             <- from main, merged to main AND develop
+feature/*  fix/*     <- short-lived work branches, one task each, from staging
+hotfix/*             <- from prod, merged to prod, main AND staging
 docs/*               <- documentation only
 ```
 
-This is the model most open-source projects that ship installable software use: GitHub Flow on
-`main` (short-lived branches, `main` always shippable, releases are tags) with one integration
-branch, `develop`, so a release can batch several merges and be verified as a whole before users
-see it. Full Git Flow (`release/*` branches) is deliberately not used; it suits scheduled releases
-by large teams and adds ceremony this project does not need.
+Three long-lived branches, staging, main and prod, the same model the maintainer uses on every other
+project, so one habit covers all of them (changed 2026-09-26 from main plus develop). Work lands on
+staging, a release candidate is promoted to main and checked there, and prod only ever holds released
+versions, which is why it is the default branch. Full Git Flow (`release/*` branches) is deliberately
+not used; it suits scheduled releases by large teams and adds ceremony this project does not need.
 
 References read before choosing, September 2026: the comparisons at inventivehq.com
 (GitFlow vs GitHub Flow vs Trunk-Based), deployhq.com (GitHub Flow, GitFlow, GitLab Flow, Release
@@ -30,14 +32,16 @@ matters more than which.
 
 | Branch | Purpose | Protection |
 |---|---|---|
-| `main` | Stable. Users clone this. A release is a tag here. | PR required, owner review, no force-push |
-| `develop` | Integration. Every PR targets this. | PR required, owner review, CLA signed, no force-push |
-| `feature/*`, `fix/*`, `docs/*` | One task per branch, from `develop`. Short-lived. | None: merge via PR to `develop` |
-| `hotfix/*` | Emergency, from `main`. | Merge to `main`, then to `develop` so it is not lost |
+| `prod` | Released versions only. Default branch, users clone this. Tagged `vX.Y.Z`. | PR required, owner review, no force-push, no deletion |
+| `main` | Release candidate, promoted from staging. | PR required, owner review, no force-push, no deletion |
+| `staging` | Integration. Every PR targets this. | PR required, owner review, CLA signed, no force-push |
+| `feature/*`, `fix/*`, `docs/*` | One task per branch, from `staging`. Short-lived. | None: merge via PR to `staging` |
+| `hotfix/*` | Emergency, from `prod`. | Merge to `prod`, then `main` and `staging` so it is not lost |
 
 **Rules:**
-- Nobody pushes directly to `main` or `develop`: PRs only, including the owner
-- A release is `develop` merged into `main` and tagged `vX.Y.Z`, never the other way
+- Nobody pushes directly to `staging`, `main` or `prod`: PRs only, including the owner
+- A release moves upward only, staging to main to prod, and is tagged `vX.Y.Z` on prod
+- The version number is the same everywhere: package.json, the changelog, the tag, and the host's plugin
 - Work branches are deleted after merge
 
 ## The gate
@@ -73,10 +77,10 @@ test(bench): report median and p95, never the mean
 
 ## PR Process
 
-1. Create a `feature/*` or `fix/*` branch from `develop`
+1. Create a `feature/*` or `fix/*` branch from `staging`
 2. Implement, run `node tools/verify.mjs`, commit with conventional messages
 3. Update `.project/CHANGELOG.md`, and `.project/STRUCTURE.md` if files moved
-4. Open a PR to `develop` using the template
+4. Open a PR to `staging` using the template
 5. Sign the CLA when the bot asks, once, on your first PR
 6. Owner reviews and merges. Branch is deleted.
 
