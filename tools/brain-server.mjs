@@ -149,13 +149,15 @@ const EPHEMERAL_SLUG = /^reference_stress_/;
 // Rate limit. A vault endpoint reachable from the internet is the most attackable surface in
 // this whole system, and a slow brute force is exactly what this stops.
 const hits = new Map();
-function rateLimited(ip) {
+const UNKNOWN_CALLER_LIMIT = 120;
+const KNOWN_CALLER_LIMIT = 600;
+function rateLimited(key, limit = UNKNOWN_CALLER_LIMIT) {
   const now = Date.now();
-  const win = hits.get(ip) || [];
+  const win = hits.get(key) || [];
   const recent = win.filter((t) => now - t < 60_000);
   recent.push(now);
-  hits.set(ip, recent);
-  return recent.length > 120;
+  hits.set(key, recent);
+  return recent.length > limit;
 }
 
 // THE BACKGROUND SAVE QUEUE for POST /memory. One run at a time, and every write that arrives while a
@@ -357,11 +359,16 @@ const handler = async (req, res) => {
     return json(res, 200, { name: want, scope: hit[1].scope, token: hit[0] });
   }
 
-  if (rateLimited(ip)) {
-    audit('RATE-LIMITED ' + ip);
+  // Known machines get their own budget, per token name, so several sessions behind one address (a laptop client
+  // runs two plus its mirror) cannot starve each other; found 2026-09-26 when 4 of 10 prompts there came
+  // back rate limited and fell to keyword-only recall. Unknown callers keep the tight per-address limit,
+  // which is what stops a slow brute force against the vault.
+  const known = authOf(req.headers.authorization);
+  if (known ? rateLimited('token:' + known.name, KNOWN_CALLER_LIMIT) : rateLimited(ip)) {
+    audit('RATE-LIMITED ' + ip + (known ? ' ' + known.name : ''));
     return json(res, 429, { error: 'too many requests' });
   }
-    const caller = authOf(req.headers.authorization);
+    const caller = known;
     if (!caller) {
       audit('DENIED ' + ip + ' ' + path);
       return json(res, 401, { error: 'unauthorized' });
@@ -398,7 +405,7 @@ const handler = async (req, res) => {
         value = execFileSync(process.execPath, [join(BRAIN, 'tools', 'vault.mjs'), 'get', name],
           { encoding: 'utf8', timeout: 15000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (e) {
-        audit('SECRET-MISS ' + name + ' by ' + ip);
+        audit('SECRET-MISS ' + name + ' by ' + ip + ' ' + (e.killed ? 'timeout' : String(e.stderr || e.message || '').split(String.fromCharCode(10))[0].slice(0, 160)));
         return json(res, 404, {
           error: 'no such secret',
           detail: 'the vault has no secret named "' + name + '". This is NOT a permission problem'

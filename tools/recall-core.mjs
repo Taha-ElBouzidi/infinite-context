@@ -107,6 +107,22 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
     return g;
   }
 
+  // First name to contact memories, read once per index version rather than on every question.
+  let contactsCache = null;
+  function contactsByFirstName(emb) {
+    const v = idxCache ? idxCache.v : null;
+    if (contactsCache && contactsCache.v === v) return contactsCache.map;
+    const map = new Map();
+    for (const s of emb.slugs.filter((x) => x.startsWith('contact_'))) {
+      let nm = '';
+      try { nm = (readFileSync(join(BRAIN, 'memory', s + '.md'), 'utf8').match(/^name:\s*(.*)$/m) || [])[1] || ''; } catch { /* gone */ }
+      const first = (nm.replace(/^contact_/, '').split(/[\s,_-]+/)[0] || '').toLowerCase();
+      if (first.length >= 3) map.set(first, (map.get(first) || []).concat([s]));
+    }
+    contactsCache = { v, map };
+    return map;
+  }
+
   function spreadActivation(seed, g) {
     const total = seed.reduce((a, b) => a + b, 0) || 1;
     const s0 = seed.map((x) => x / total);
@@ -150,7 +166,7 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
       const qv = o.data;
       queryVectors.push(qv);
       embedded++;
-      const target = qi === contextIndex ? ctxBest : best;
+      const target = (contextIndex >= 0 && qi >= contextIndex) ? ctxBest : best;
       for (let i = 0; i < emb.slugs.length; i++) {
         const v = emb.vectors[i];
         let dot = 0;
@@ -225,6 +241,43 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
           .sort((a, b) => b[1] - a[1]).slice(0, PART_K)
           .forEach(([s]) => { if (!chosen.includes(s)) chosen.push(s); });
       }
+      // EACH PART ALSO BRINGS ITS BEST KEYWORD MATCHES (2026-09-26), so a part that names a person reaches
+      // that person's memory even when the rest of a long message is about other things. Measured on the
+      // real sets with the hook's own preparation: long 19 to 21 of 46 (pieces 103 to 107 of 142), far
+      // apart 14 to 17 of 30, two-memory 80 to 81, single 113 to 114, for about 4 more memories on a long
+      // message. 3 per part added one far case for 2 more memories; a stricter bar (0.35, 0.5) lost gains.
+      // Rejected the same day: weighting rare words harder (1/df^1.5 and ^2), worse on every set.
+      const CTX_PART_K = Number(process.env.RECALL_CTX_PART_K || 0);
+      const CTX_PART_MIN = Number(process.env.RECALL_CTX_PART_MIN || 0.45);
+      if (CTX_PART_K > 0 && contextIndex >= 0) {
+        for (let qi = contextIndex; qi < queryVectors.length; qi++) {
+          const qv = queryVectors[qi];
+          emb.vectors.map((v, i) => { let d = 0; for (let k = 0; k < v.length; k++) d += qv[k] * v[k]; return [emb.slugs[i], d]; })
+            .filter(([, d]) => d >= CTX_PART_MIN).sort((a, b) => b[1] - a[1]).slice(0, CTX_PART_K)
+            .forEach(([s]) => { if (!chosen.includes(s)) chosen.push(s); });
+        }
+      }
+      const PART_SPARSE_K = Number(process.env.RECALL_PART_SPARSE_K || 2);
+      if (PART_SPARSE_K > 0) {
+        for (let qi = 1; qi <= Math.min(parts, queries.length - 1); qi++) {
+          const sc = new Map();
+          for (const w of new Set(qterms(String(queries[qi]).toLowerCase()))) {
+            const ss = kw.terms[w]; if (!ss) continue;
+            for (const s of ss) sc.set(s, (sc.get(s) || 0) + 1 / ss.length);
+          }
+          [...sc.entries()].filter(([, v]) => v >= Number(process.env.RECALL_PART_SPARSE_MIN || 0.25)).sort((a, b) => b[1] - a[1]).slice(0, PART_SPARSE_K)
+            .forEach(([s]) => { if (!chosen.includes(s)) chosen.push(s); });
+        }
+      }
+      // A MESSAGE THAT NAMES A PERSON BRINGS THAT PERSON'S CONTACT MEMORY (2026-09-26), when exactly one
+      // contact has that first name. Inside a long message a common first name carries too little keyword
+      // weight: "a client" appears in many descriptions, and his contact was missed in 2 of the 4 long
+      // messages that needed it. Measured: long pieces 107 to 109 of 142, no change on the other sets,
+      // 0.2 more memories on average. RECALL_ENTITY=0 turns it off.
+      if (process.env.RECALL_ENTITY !== '0') {
+        const words = new Set(String(prompt).toLowerCase().match(/[a-zà-ÿ]{3,}/g) || []);
+        for (const [first, ss] of contactsByFirstName(emb)) if (ss.length === 1 && words.has(first) && !chosen.includes(ss[0])) chosen.push(ss[0]);
+      }
       const at = new Map(emb.slugs.map((s, i) => [s, i]));
       const seed = new Array(emb.slugs.length).fill(0);
       for (const [s, v] of fused) if (at.has(s)) seed[at.get(s)] = v;
@@ -235,6 +288,23 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
         .filter(([s, v]) => !chosen.includes(s) && v > 0 && v >= strongest * LINK_BAR && v >= LINK_FLOOR / emb.slugs.length)
         .sort((a, b) => b[1] - a[1])
         .forEach(([s]) => { chosen.push(s); linked.add(s); });
+    }
+    /* A LONG MESSAGE IS RECALLED AS SEVERAL SMALL ONES (2026-09-26). Each part of a message of SPLIT_MIN
+       characters or more gets the full recall a message of its own would get, bar and links included.
+       Measured on the real sets: long messages 21 to 32 of 46 (pieces 109 to 127 of 142), about 71
+       memories on a long message, every other set unchanged because their messages are shorter. A local
+       1.5B model as the splitter reached 33 of 46 for 0.8 s a message, not worth running a model for.
+       RECALL_SPLIT_MIN=0 turns it off. */
+    const SPLIT_MIN = Number(process.env.RECALL_SPLIT_MIN ?? 400);
+    if (RECALL_MODE === 'threshold' && !explicitLimit && SPLIT_MIN > 0 && String(prompt).length >= SPLIT_MIN) {
+      for (let qi = 1; qi <= Math.min(parts, queries.length - 1); qi++) {
+        if (contextIndex >= 0 && qi >= contextIndex) continue;
+        for (const h of await recall(queries[qi], [queries[qi]], limit, 0, false, 0, -1)) {
+          if (chosen.includes(h.slug)) continue;
+          chosen.push(h.slug);
+          if (h.how === 'linked') linked.add(h.slug);
+        }
+      }
     }
     return chosen
       .map((slug, rank) => {

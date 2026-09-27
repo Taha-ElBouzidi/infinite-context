@@ -95,6 +95,7 @@ function translateSync(text, brainDir) {
 // block, so a module-level function referencing it throws at call time. That exact mistake already
 // cost hours here once, in translateSync, which is why translateSync takes it as a parameter too.
 let LAST_SERVER_V = null;
+let RATE_LIMITED = false;
 let REMOTE = undefined;
 // Where the token comes from, cheapest source first.
 //
@@ -530,8 +531,15 @@ function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1)
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 9' + '\n';
-    const out = curlRemote(conf, 9000, cfg);
-    const parsed = JSON.parse(out || '{}');
+    let parsed = JSON.parse(curlRemote(conf, 9000, cfg) || '{}');
+    // Rate limited is not "down" and not "embed server not running": wait a moment and ask once more,
+    // and if it still refuses, say so. On a laptop client, 2026-09-26, 4 of 10 prompts were refused this way and
+    // the turn showed a misleading note and keyword-only recall over an empty disk.
+    if (parsed.error === 'too many requests') {
+      execFileSync(process.execPath, ['-e', 'setTimeout(()=>{},1200)'], { windowsHide: true });
+      parsed = JSON.parse(curlRemote(conf, 9000, cfg) || '{}');
+      if (parsed.error === 'too many requests') { RATE_LIMITED = true; return null; }
+    }
     if (parsed.v) LAST_SERVER_V = parsed.v;
     if (!Array.isArray(parsed.ranked)) return null;
     try { unlinkSync(REMOTE_DOWN); } catch { /* was not marked */ }
@@ -1074,13 +1082,15 @@ try {
         // hook's own output in a live turn. A false degradation warning is worse than none: it tells
         // the agent not to trust recall that is in fact working perfectly.
         } else if (!vec && !hasArabic && !serverRanked) {
-          denseNote = "NOTE: semantic recall is OFF (embed server not running). Keyword only, so a paraphrase may not match. Start it: node tools/embed-server.mjs";
+          denseNote = RATE_LIMITED
+            ? "NOTE: the brain server refused this turn as rate limited (too many requests from this machine in the last minute), so recall below is keyword-only and may be empty. Say so, and ask again in a minute."
+            : "NOTE: semantic recall is OFF (embed server not running). Keyword only, so a paraphrase may not match. Start it: node tools/embed-server.mjs";
         }
 
         // The embed call already told us the server's index version, for free. If it has moved on,
         // start the repair in the background and carry on answering with what we have. The next
         // turn gets the fresh index. Nothing here blocks and nothing here can fail loudly.
-        const refreshing = repairIndexInBackground(LAST_SERVER_V, BRAIN);
+        const refreshing = holdsMemoriesLocally(BRAIN) ? repairIndexInBackground(LAST_SERVER_V, BRAIN) : null;
         if (refreshing === 'refreshing') {
           denseNote = (denseNote ? denseNote + ' ' : '')
             + 'NOTE: this machine index was behind the server and is refreshing in the background. '
@@ -1219,7 +1229,7 @@ try {
       const cut = (s, n) => { const x = String(s || ''); return x.length <= n ? x : x.slice(0, n).replace(/\s+\S*$/, '') + '...'; };
       out.push(
         '',
-        `BRAIN RECALL: ${hits.length} memories (files: ${join(BRAIN, 'memory').split(String.fromCharCode(92)).join('/')}/<name>.md). `
+        `BRAIN RECALL: ${hits.length} memories (${holdsMemoriesLocally(BRAIN) ? 'files: ' + join(BRAIN, 'memory').split(String.fromCharCode(92)).join('/') + '/<name>.md' : 'on the brain server only; open one with node tools/brain-client.mjs read <slug>'}). `
           + 'These lines only say which files are worth opening, never what they say: open the relevant ones before answering.',
         ...(denseNote ? [denseNote] : []),
       );

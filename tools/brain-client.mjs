@@ -16,7 +16,7 @@
 //   node tools/brain-client.mjs bootstrap         fetch the vault passphrase onto this machine
 //   node tools/brain-client.mjs status            is the server reachable, and what works
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname, tmpdir } from 'node:os';
@@ -298,7 +298,8 @@ if (cmd === 'status') {
         : 'KEYWORD ONLY, no local daemon and the server is ' + (markFresh ? 'marked down' : 'not reachable')
   ) + '\n');
   if (existsSync(KEYFILE)) process.stdout.write('legacy v1 passphrase still present at ' + KEYFILE + ', delete it once every secret is v2\n');
-  process.stdout.write('local brain clone: ' + (existsSync(join(BRAIN, 'memory')) ? 'yes, memories and rules work offline' : 'MISSING') + '\n');
+const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWith('.md') && n !== 'MEMORY.md'); } catch { return false; } };
+  process.stdout.write('local brain clone: ' + (existsSync(join(BRAIN, 'memory')) && fs_hasMemories(join(BRAIN, 'memory')) ? 'yes, memories and rules work offline' : 'none, memories are on the brain server only') + '\n');
 
 } else if (cmd === 'bootstrap') {
   // Rewritten 2026-08-21. This used to download the shared vault passphrase over the network,

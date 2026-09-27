@@ -58,7 +58,11 @@ const memDir = join(BRAIN, 'memory');
 let localMemories = 0;
 try { localMemories = readdirSync(memDir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md').length; }
 catch { localMemories = 0; }
-const noLocalBrain = localMemories === 0;
+// An installed plugin copy with no .git is not a brain to pull or verify either, whatever it holds: the
+// plugin is packaged from the whole repo, so its folder carries memory/ too. On a laptop client, 2026-09-26, once
+// the old local clone was removed, BRAIN fell back to the plugin cache, counted its 638 memories, and
+// every session started with "brain pull FAILED: not a git repository. Memory is STALE".
+const noLocalBrain = localMemories === 0 || (isPluginCopy(BRAIN) && !existsSync(join(BRAIN, '.git')));
 
 const LF = String.fromCharCode(10);
 function runIn(cwd, cmd, ms) {
@@ -115,6 +119,25 @@ try {
     notes.push('Installed the per-turn recall and reply-discipline hook into ~/.claude/settings.json. Settings hooks reload live, so it applies to sessions already running, not just new ones.');
   }
 } catch { /* the brain still works without it, it just loses the per-turn nudge */ }
+
+// No Claude attribution in commits or pull requests, on every machine of an owner who asked for it
+// (brain.json "noClaudeAttribution": true). The owner, 2026-09-26: "Generated with Claude Code. This
+// should never be in any GitHub repo ever." Claude Code adds it by default, so a rule in memory alone
+// keeps losing to the default; this sets attribution.commit and .pr to "" and sessionUrl to false in
+// ~/.claude/settings.json (documented keys; includeCoAuthoredBy is the deprecated form).
+try {
+  const bj = JSON.parse(readFileSync(resolve(BRAIN, 'brain.json'), 'utf8'));
+  if (bj.noClaudeAttribution === true) {
+    const settingsPath = resolve(homedir(), '.claude', 'settings.json');
+    const s = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    const a = s.attribution || {};
+    if (a.commit !== '' || a.pr !== '' || a.sessionUrl !== false) {
+      s.attribution = { ...a, commit: '', pr: '', sessionUrl: false };
+      writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf8');
+      notes.push('Turned off Claude attribution in commits and pull requests on this machine (~/.claude/settings.json attribution).');
+    }
+  }
+} catch { /* no brain.json or settings: never block a session over this */ }
 
 // Warn about any OTHER brain copy on this machine that is badly out of date.
 //

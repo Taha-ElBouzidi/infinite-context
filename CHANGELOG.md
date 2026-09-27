@@ -2,6 +2,27 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.6
+
+- **A long message is recalled as several small ones.** Each part of a message of 400 characters or more
+  gets the full recall a message of its own would get, bar and linked memories included
+  (`RECALL_SPLIT_MIN`, 0 turns it off). Measured on one user's 46 real long messages: fully answered
+  went from 21 to 32, with no change on shorter questions. A small local model (Qwen2.5 1.5B) as the
+  splitter reached 33 of 46 for 0.8 s a message, so it is not used.
+- **Each part of a message also brings its best keyword matches**, and a message that names a person
+  brings that person's contact memory when exactly one contact has that first name
+  (`RECALL_ENTITY=0` turns it off). Long messages 17 to 21 of 46 before the split above.
+- **Rate limit per known token, not per address**, so several sessions on one machine no longer starve
+  each other; unknown callers keep the tight per-address limit. The hook says "rate limited" instead of
+  reporting the embed server down.
+- **Machines without a local copy of the memories** are recognised at session start and by the recall
+  hook: no failed pull warning, no local index rebuild, and the recall header says the memories are on
+  the server. `brain-client status` no longer claims a local copy that is not there.
+- **A failed secret read says why.** The server used to answer every failure as "no such secret"; it now
+  logs the real reason (a timeout, for example).
+- **No assistant attribution in commits.** With `noClaudeAttribution: true` in `brain.json`, session
+  start sets Claude Code's attribution setting so commits and pull requests carry no generated-by lines.
+
 ## 0.4.1
 
 - **Branches: staging, main, prod.** `staging` replaces `develop` and is where pull requests land, `main`
