@@ -597,6 +597,9 @@ function quality(now, dt){
   lastQ = now;
   // 45, not 30: this scene drifts continuously, so anything under about 45 reads as stepping
   // rather than as motion.
+  // LIGHT MODE, the step after the lowest resolution: when 1.0 is still too slow, stop drawing the glow
+  // image behind ordinary dots. It stays on until the screen size changes.
+  if (fpsAvg < 45 && DPR <= 1.01 && !S.lite){ S.lite = true; fpsAvg = 60; return; }
   if (fpsAvg < 45 && DPR > 1.01){
     dprCeil = DPR;
     setDPR(Math.max(1, +(DPR-0.3).toFixed(2)));
@@ -627,6 +630,7 @@ function resize(){
   dprCap = Math.min(window.devicePixelRatio||1, window.innerWidth < 760 ? 1.6 : 2);
   // A rotation or a window drag starts the search again from the top of the range.
   DPR = dprCap; dprCeil = Infinity; fpsAvg = 60; lastQ = 0;
+  S.lite = false;
   W = cv.clientWidth; H = cv.clientHeight;
   cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
   ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -1712,7 +1716,7 @@ function drawNode(n,p,near,q,now){
   // down at it, so the same rank drives the bloom and the opacity: the hot ones burn, the cold
   // ones recede. h defaults to 0.5 for a node created since the last layout.
   const h = n._heat === undefined ? 0.5 : n._heat;
-  if (!dimmed){
+  if (!dimmed && !(S.lite && pulse <= 0 && !tied && h < 0.75)){
     const spread = r*(2.2 + h*3.0 + pulse*3 + (tied?1.4:0));
     paintBloom(p.X, p.Y, spread, n.dying ? C("--stop") : (pulse>0||tied)?C("--volt"):n.color,
       (.14 + h*.34 + pulse*.55 + (tied?.30:0))*p.d*fade);
@@ -1751,16 +1755,34 @@ function drawSats(now){
 function drawHubLabels(){
   if (!S.labels || S.place!=="links") return;
   ctx.textAlign="center"; ctx.textBaseline="middle";
+  // A group with no memories has no dots to name.
+  const used = new Set();
+  for (const n of S.nodes) if (!n.dying) used.add(n.region);
+  // While searching or focused, a group keeps its colour only if it holds a match, the focused memory
+  // or one of its neighbours; every other name goes grey with its dots.
+  let lit = null;
+  const focus = S.hover || S.selected;
+  if (S.matches || focus){
+    lit = new Set();
+    if (S.matches) for (const n of S.nodes) if (S.matches.has(n.name)) lit.add(n.region);
+    if (focus){ lit.add(focus.region); for (const m of neighbours(focus)) lit.add(m.region); }
+  }
   for (const k of ORDER){
+    if (!used.has(k)) continue;
     // Pushed out past the shell along the band's own direction. Sitting at the hub put the
     // name inside the sphere, where the nodes drew over it.
     const m = (S.bandMid && S.bandMid[k]) || S.hubs[k];
     const len = Math.hypot(m.x,m.y,m.z) || 1, f = (1.30*(m.b||1))/len;
     const P = project({ x:m.x*f, y:m.y*f, z:m.z*f });
-    ctx.font = `400 ${Math.round(23*P.d)}px ${C("--serif")}`;
-    ctx.fillStyle = `rgba(237,234,227,${.20+P.d*.16})`;
-    ctx.fillText(k, P.X, P.Y);
+    // A group's name in its own colour, in the plain mono of the status line, so it is clear which
+    // dots it names.
+    ctx.font = `600 ${Math.round(12*P.d)}px ${C("--mono")}`;
+    if ("letterSpacing" in ctx) ctx.letterSpacing = "0.12em";
+    const muted = lit && !lit.has(k);
+    ctx.fillStyle = muted ? hexa(C("--ink3"), .35) : hexa(REGION_COLOR.get(k) || C("--ink2"), .45 + P.d*.3);
+    ctx.fillText(String(k).toUpperCase(), P.X, P.Y);
   }
+  if ("letterSpacing" in ctx) ctx.letterSpacing = "0px";
 }
 
 function drawLabels(vis, focus, q){

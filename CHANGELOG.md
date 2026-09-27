@@ -2,6 +2,17 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.7
+
+- **Dashboard: group names in their own colour.** Each group name on the sphere is drawn in its group's
+  colour, in the mono font of the status line, so it is clear which dots it names. A group with no
+  memories gets no name.
+- **Dashboard search keeps its groups visible.** While searching, or with a memory selected, the names of
+  the groups that hold a match stay coloured and the rest go grey with their dots.
+- **Dashboard light mode for slow devices.** When the page is still too slow at its lowest resolution, it
+  stops drawing the glow behind ordinary dots (bright and recalled ones keep it) until the screen size
+  changes. Measured on one desktop: 4.2 to 3.2 ms a frame with 638 memories.
+
 ## 0.4.6
 
 - **A long message is recalled as several small ones.** Each part of a message of 400 characters or more
