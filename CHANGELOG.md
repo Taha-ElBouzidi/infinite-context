@@ -2,6 +2,15 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.10
+
+- **A secret read no longer holds up the server.** The vault decrypt runs as an async child process, so
+  recall keeps answering while it runs; a decrypt over 15 s answers 503 (busy) instead of 404 (missing),
+  and the client retries once after 3 s.
+- **No reminders list at session start.** Session start no longer reads a REMINDERS.md. Dated reminders
+  belong in a calendar and undated ones in the memory of their subject, where recall surfaces them when
+  the subject comes up.
+
 ## 0.4.8
 
 - **Agents are invited to contribute back.** `AGENTS.md` has a Contributing back section: an agent that fixes

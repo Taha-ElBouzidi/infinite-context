@@ -349,7 +349,13 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
 
 } else if (cmd === 'secret') {
   if (!arg) { process.stderr.write('usage: brain-client.mjs secret <name>\n'); process.exit(1); }
-  const r = call('/vault/get/' + encodeURIComponent(arg));
+  let r = call('/vault/get/' + encodeURIComponent(arg));
+  // One retry: the server answers 503 when a decrypt runs long (2026-09-27), and a laptop client has no local
+  // key to fall back to, so a single slow moment used to become an empty secret.
+  if (!(r && typeof r.value === 'string')) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
+    r = call('/vault/get/' + encodeURIComponent(arg));
+  }
   if (r && typeof r.value === 'string') {
     process.stdout.write(r.value);
   } else {

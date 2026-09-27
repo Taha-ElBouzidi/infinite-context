@@ -564,26 +564,9 @@ if (!vr.ok) {
   notes.push('drifted from memory/, or reflect.mjs found contradictions.');
 }
 
-// Open reminders. REMINDERS.md says "any agent surfaces the open ones proactively,
-// at session start", but nothing referenced the file, so nothing ever did. It was sitting
-// there with an ICO registration already overdue since 2026-07-01. A reminder nobody reads
-// is worse than no reminder: it creates the belief that something is being tracked.
-try {
-  const rem = readFileSync(resolve(BRAIN, 'REMINDERS.md'), 'utf8').replace(/\r\n/g, '\n');
-  const today = new Date().toISOString().slice(0, 10);
-  const open = rem.split('\n')
-    .filter((l) => /^\s*-\s*\[ \]/.test(l))
-    .map((l) => l.replace(/^\s*-\s*\[ \]\s*/, '').trim());
-  if (open.length) {
-    notes.push('OPEN REMINDERS (' + open.length + ') from REMINDERS.md:');
-    for (const item of open.slice(0, 10)) {
-      // Flag anything whose stated due date has already passed.
-      const due = (item.match(/due (\d{4}-\d{2}-\d{2})/) || [])[1];
-      notes.push('  ' + (due && due < today ? '[OVERDUE] ' : '') + item);
-    }
-    notes.push('Surface these when the person or project comes up. Tick them off in REMINDERS.md when done.');
-  }
-} catch { /* no reminders file, or unreadable: never block a session over it */ }
+// No reminders list at session start (removed 2026-09-27, the owner). It repeated the calendar for dated items
+// and recall for undated ones, and showed everything every session: Annex 11 was flagged overdue for six
+// weeks without being done. Dated items live in the calendar, the rest in memories that recall surfaces.
 
 // INJECT the brain itself, do not just point at it.
 //

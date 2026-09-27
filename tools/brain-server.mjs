@@ -400,12 +400,18 @@ const handler = async (req, res) => {
       // broken on this machine" and could not tell it apart from a real fault, because a 500
       // says the server broke while the truth was that the caller asked for a name that is not
       // there. A 404 that names the fix cannot be misread that way.
+      // ASYNC, NOT execFileSync (2026-09-27). A synchronous child blocked the whole server until the
+      // decrypt finished: under load one read took 15 s and every recall from every machine waited
+      // behind it. Now other requests are served while it runs. A timeout is a 503, not a 404: the
+      // secret exists, the server was slow.
       let value;
       try {
-        value = execFileSync(process.execPath, [join(BRAIN, 'tools', 'vault.mjs'), 'get', name],
-          { encoding: 'utf8', timeout: 15000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        value = await new Promise((ok, fail) => execFile(process.execPath, [join(BRAIN, 'tools', 'vault.mjs'), 'get', name],
+          { encoding: 'utf8', timeout: 15000, windowsHide: true },
+          (err, stdout, stderr) => err ? fail(Object.assign(err, { stderr })) : ok(stdout)));
       } catch (e) {
         audit('SECRET-MISS ' + name + ' by ' + ip + ' ' + (e.killed ? 'timeout' : String(e.stderr || e.message || '').split(String.fromCharCode(10))[0].slice(0, 160)));
+        if (e.killed) return json(res, 503, { error: 'vault busy', detail: 'the decrypt took over 15 s; retry in a few seconds' });
         return json(res, 404, {
           error: 'no such secret',
           detail: 'the vault has no secret named "' + name + '". This is NOT a permission problem'
