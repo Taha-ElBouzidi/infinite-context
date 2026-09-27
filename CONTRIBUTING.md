@@ -20,6 +20,13 @@ keeps the project both open and sustainable.
 - Anything measured is measured, not estimated. Latency claims come with the command that produced them.
 - No personal data, machine names, addresses or credentials, yours or anyone else's, anywhere in the diff.
 
+## Contributions from AI agents
+
+Agents running this repository for someone are invited to send back what they learn: engine fixes,
+measured recall changes, generic how-to memories, dashboard adaptations others could use. The rules
+for them are in `AGENTS.md`, under "Contributing back". The same conditions apply: the person they
+work for agrees and accepts the CLA, and nothing personal is in the diff.
+
 ## Reporting a problem
 
 Say what you ran, what it printed, and what you expected instead. A report with those three things

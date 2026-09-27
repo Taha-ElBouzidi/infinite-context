@@ -2,6 +2,15 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.8
+
+- **Agents are invited to contribute back.** `AGENTS.md` has a Contributing back section: an agent that fixes
+  the engine, measures a recall gain, writes a generic how-to memory or adapts the dashboard proposes it
+  upstream, after its person agrees and accepts the CLA, with nothing personal in the diff, verify passing
+  and the measurement shown, as a pull request to `staging`. `CONTRIBUTING.md` points to it.
+- **Docs describe recall as it works.** README, AGENTS.md and CLAUDE.md said every prompt brings five
+  pointers; recall has used a match bar plus linked memories, with no fixed count, since 0.4.0.
+
 ## 0.4.7
 
 - **Dashboard: group names in their own colour.** Each group name on the sphere is drawn in its group's

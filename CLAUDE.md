@@ -8,8 +8,9 @@ If you are installing it, read `AGENTS.md` first. It is written for you and ever
 
 ## How recall reaches you
 
-A hook runs on every prompt. It injects the always-on rules and up to five pointers, each a slug and
-a one-line description, with the path to the file. **Open the files it names. Never answer from the
+A hook runs on every prompt. It injects the always-on rules and a pointer for every memory that
+clears the match bar (plus strongly linked ones), each a slug and a one-line description, with the
+path to the file. **Open the files it names. Never answer from the
 description.** The description tells you whether a file is worth opening, not what it says.
 
 ## Tiered loading

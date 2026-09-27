@@ -11,11 +11,12 @@ Unlimited memory for coding agents, without putting it in the context window.</p
   <a href="CLA.md"><img alt="CLA required" src="https://img.shields.io/badge/contributions-CLA%20required-6b7280"></a>
 </p>
 
-<p align="center"><img src="docs/recall.svg" alt="Your prompt goes to a hook, which matches by keyword and meaning and returns five pointers, each a slug, a one-line description and a path. The agent opens the one or two it needs and answers with the fact." width="900"></p>
+<p align="center"><img src="docs/recall.svg" alt="Your prompt goes to a hook, which matches by keyword and meaning and returns a pointer for each memory that matches, each a slug, a one-line description and a path. The agent opens the one or two it needs and answers with the fact." width="900"></p>
 
 An agent using Infinite Context never loses a fact, and loads almost nothing on any given turn.
-Every prompt gets **five pointers**, a slug and a one-line description each, and the agent opens only
-the one or two memories the question actually needs. The memory can grow to thousands of facts.
+Every prompt gets **a pointer for each memory that clears the match bar**, plus the ones strongly
+linked to them, a slug and a one-line description each, and the agent opens only the memories the
+question actually needs. The memory can grow to thousands of facts.
 The prompt stays the same size.
 
 It runs entirely on your machine. No account, no cloud, no data leaving the building.

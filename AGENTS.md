@@ -6,8 +6,10 @@ before moving to the next. Do not tell the person it is installed until the last
 
 ## What you are installing
 
-A recall system. On every prompt, a hook sends the prompt to a local index and injects up to five
-pointers (a slug and a one-line description each) plus a small set of behaviour rules. You then
+A recall system. On every prompt, a hook sends the prompt to a local index and injects a pointer
+(a slug and a one-line description) for every memory that clears the match bar, plus memories
+strongly linked to those, plus a small set of behaviour rules. There is no fixed count: a trivial
+prompt brings a handful, a long message many. You then
 open the memory files that matter. Memories are markdown files you will write yourself as you learn
 things. Nothing leaves this machine.
 
@@ -83,6 +85,25 @@ happens. Nothing to do here unless step 1 reported `semantic recall  : OFF`.
 - **Link memories** with `[[slug]]`. A memory with no links in or out fails `verify.mjs`.
 - **If recall is unavailable, say so** in your first sentence. Degraded memory that announces
   itself is recoverable. Silent degradation is answering from nothing while sounding sure.
+
+## Contributing back
+
+This project improves when the agents using it send back what they learn. If, while working for your
+person, you fix a bug in the engine, measure a recall change that helps, write a how-to memory that
+would help anyone (not one about your person), or adapt the dashboard in a way others could use,
+propose it upstream.
+
+1. **Ask your person first.** A pull request publishes their work under their GitHub account, and
+   they must accept the CLA (`CLA.md`). Never open one without a clear yes.
+2. **Strip everything personal.** No names, machine names, paths, addresses, credentials or memory
+   content from their brain. Only engine code, generic how-to memories under `kit/`, and docs.
+3. **Prove it.** Run `node tools/verify.mjs`. For a recall change, give the before and after on a
+   test set and the command that produced them.
+4. **Open the pull request against `staging`**, saying what changed, why, and how you measured it.
+   Small and focused beats large.
+
+If you find a problem you cannot fix, open an issue with what you ran, what it printed and what you
+expected.
 
 ## What can go wrong, in order of likelihood
 
