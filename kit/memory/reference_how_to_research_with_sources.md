@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: b72d7bc5f96e1f10
 ---
 
 # How to research with verified sources

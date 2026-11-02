@@ -5,41 +5,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-session-start.mjs\"",
-            "timeout": 30,
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs\" SessionStart",
+            "timeout": 35,
             "statusMessage": "Loading the brain"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs\" UserPromptSubmit",
+            "timeout": 35
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-content.mjs\"",
-            "timeout": 10,
-            "statusMessage": "Scanning for em dash / emoji"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-secrets.mjs\"",
-            "timeout": 15,
-            "if": "Bash(git commit:*)",
-            "statusMessage": "Scanning staged diff for secrets"
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-brain-commit.mjs\"",
-            "timeout": 130,
-            "if": "Bash(git commit:*)",
-            "statusMessage": "Verifying brain integrity"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs\" PreToolUse",
+            "timeout": 140
           }
         ]
       }
@@ -49,18 +40,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-stop.mjs\"",
-            "timeout": 10
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs\" Stop",
+            "timeout": 15
           }
         ]
-      },
+      }
+    ],
+    "PostCompact": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-memory-written.mjs\"",
-            "timeout": 10,
-            "statusMessage": "Brain check: did this session learn anything"
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/dispatch.mjs\" PostCompact",
+            "timeout": 10
           }
         ]
       }

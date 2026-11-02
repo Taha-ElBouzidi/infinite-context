@@ -80,7 +80,7 @@ for (let r = 0; r < RUNS; r += 1) {
     if (m) { hits += Number(m[1]); } else { empty += 1; }
     if (out.includes('brain-client.mjs read')) fetchCmds += 1;
     // Which path answered. The hook says so in the injection when it is degraded.
-    if (out.includes('semantic recall is OFF')) mode = 'keyword only (degraded)';
+    if (/semantic recall (is OFF|missed)/.test(out)) mode = 'keyword only (degraded)';
     else if (mode === 'unknown') mode = 'fused';
   }
 }

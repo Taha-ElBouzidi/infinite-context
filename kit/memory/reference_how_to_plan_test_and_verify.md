@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: 09bf52be4a462ff3
 ---
 
 # How to plan, test, and verify any non-trivial task

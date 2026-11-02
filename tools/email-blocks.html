@@ -1,0 +1,37 @@
+<!-- Outlook-safe building blocks for HTML emails. Copy a block, change the text.
+     PLAIN BY DEFAULT: paragraphs, and a table for numbers. Use another block only when it makes the email easier to read
+     (for example a chart image for a trend), never as decoration. The owner, 2026-10-23: "if something helps us to make our
+     email easy to read etc, sure", after a test email with boxes, buttons and bars looked "useless".
+     Rules: inline styles only, ONE style attribute per tag, double quotes, Arial, every table cell bordered 1px solid #999999,
+     the paragraph after a table or box gets margin 12pt top and bottom (Outlook ignores a table's own margin).
+     Source: two drafts rejected on 2026-10-23 (paragraphs stuck together, black table borders). Method:
+     reference_how_to_write_an_email.
+     Check every draft with: node tools/email-check.mjs <file.html> -->
+
+<!-- PARAGRAPH (normal, and after a table or box) -->
+<p style="margin:0 0 12pt 0">A normal paragraph.</p>
+<p style="margin:12pt 0 12pt 0">Paragraph after a table or box.</p>
+
+<!-- SPACER: between two tables or boxes in a row (Outlook ignores table margins, so they would touch) -->
+<p style="margin:0;font-size:1pt;line-height:12pt">&nbsp;</p>
+
+<!-- TABLE: text left, numbers right, header and total on grey -->
+<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;font-size:10pt;color:#1a1a1a"><tr><th align="left" style="border:1px solid #999999;background:#f2f2f2;padding:5pt 10pt;font-weight:bold;text-align:left">Item</th><th align="right" style="border:1px solid #999999;background:#f2f2f2;padding:5pt 10pt;font-weight:bold;text-align:right">Value</th></tr><tr><td align="left" style="border:1px solid #999999;padding:5pt 10pt;text-align:left">Row</td><td align="right" style="border:1px solid #999999;padding:5pt 10pt;text-align:right">1,234</td></tr><tr><td align="left" style="border:1px solid #999999;background:#f2f2f2;padding:5pt 10pt;font-weight:bold;text-align:left">Total</td><td align="right" style="border:1px solid #999999;background:#f2f2f2;padding:5pt 10pt;font-weight:bold;text-align:right">1,234</td></tr></table>
+
+<!-- CALLOUT: one key point, yellow bar -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse"><tr><td style="border-left:4px solid #ffcc00;background:#f7f7f7;padding:8pt 12pt;font-family:Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.45;color:#1a1a1a">One key point.</td></tr></table>
+
+<!-- IMAGE WITH CAPTION (attach the image with a content id) -->
+<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td><img src="cid:chart1" alt="What the chart shows" width="560" style="display:block;border:1px solid #e0e0e0"></td></tr><tr><td style="padding-top:4pt;font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#666666">Caption.</td></tr></table>
+
+<!-- VIDEO: a thumbnail image that links to the video -->
+<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td><a href="VIDEO_URL" style="text-decoration:none"><img src="cid:videothumb" alt="Video: what it shows (2 min)" width="560" style="display:block;border:1px solid #e0e0e0"></a></td></tr><tr><td style="padding-top:4pt;font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#666666">Click the image to watch the video (2 min).</td></tr></table>
+
+<!-- BUTTON -->
+<table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr><td bgcolor="#1a1a1a" style="background:#1a1a1a;padding:8pt 16pt"><a href="URL" style="font-family:Arial,Helvetica,sans-serif;font-size:10.5pt;font-weight:bold;color:#ffffff;text-decoration:none">Open the report</a></td></tr></table>
+
+<!-- TWO COLUMNS -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse"><tr><td width="48%" valign="top" style="border:1px solid #999999;padding:8pt 10pt;font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.45;color:#1a1a1a"><b>Option A</b><br>Short lines.</td><td width="4%" style="font-size:1pt">&nbsp;</td><td width="48%" valign="top" style="border:1px solid #999999;padding:8pt 10pt;font-family:Arial,Helvetica,sans-serif;font-size:10pt;line-height:1.45;color:#1a1a1a"><b>Option B</b><br>Short lines.</td></tr></table>
+
+<!-- BAR inside a cell (a chart without an image): width = the value scaled; #f2c200 on target, #999999 under target -->
+<table cellpadding="0" cellspacing="0" border="0"><tr><td width="170" height="10" bgcolor="#f2c200" style="font-size:1pt;line-height:1pt">&nbsp;</td></tr></table>

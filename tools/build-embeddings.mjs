@@ -41,13 +41,27 @@ const t0 = Date.now();
 const embed = await pipeline('feature-extraction', MODEL);
 const loadMs = Date.now() - t0;
 
+// ONLY WHAT CHANGED IS EMBEDDED AGAIN (2026-09-28). Every save used to re-embed all 640 memories, one to
+// two minutes of full CPU on the host, and recall from other machines slowed to 17 s and timed out while it
+// ran (the locked-down client machine and a laptop client, 10:44 to 10:49). A vector is reused when the exact text it was made from is
+// unchanged, same model.
+const docHashes = docs.map((d) => hash(d));
+const reuse = new Map();
+try {
+  const prev = JSON.parse(readFileSync(join(IDX, 'embeddings.json'), 'utf8'));
+  if (prev.model === MODEL && Array.isArray(prev.docHashes)) prev.slugs.forEach((s, i) => reuse.set(s + ' ' + prev.docHashes[i], prev.vectors[i]));
+} catch { /* first build, or an older file without hashes: embed everything once */ }
 const t1 = Date.now();
 const vectors = [];
-for (const d of docs) {
-  const out = await embed(d, { pooling: 'mean', normalize: true });
+let embedded = 0;
+for (let i = 0; i < docs.length; i++) {
+  const again = reuse.get(slugs[i] + ' ' + docHashes[i]);
+  if (again) { vectors.push(again); continue; }
+  const out = await embed(docs[i], { pooling: 'mean', normalize: true });
   // 4 decimals: the full float wastes about 60% of the file for cosine differences far below
   // anything that changes a ranking.
   vectors.push(Array.from(out.data).map((x) => Math.round(x * 1e4) / 1e4));
+  embedded++;
 }
 const embedMs = Date.now() - t1;
 
@@ -63,6 +77,7 @@ const payload = {
   // body edit is seen as stale. The field name is kept so older readers still find it.
   descriptionsHash: textHash(BRAIN, keywords.descriptions),
   slugs,
+  docHashes,
   vectors,
 };
 writeFileSync(join(IDX, 'embeddings.json'), JSON.stringify(payload), 'utf8');
@@ -97,4 +112,4 @@ function hash(str) {
 
 const bytes = Buffer.byteLength(JSON.stringify(payload));
 console.log(`embeddings: ${slugs.length} memories, ${payload.dims} dims, ${Math.round(bytes / 1024)}KB`);
-console.log(`model load ${loadMs}ms, embed ${embedMs}ms`);
+console.log(`model load ${loadMs}ms, embed ${embedMs}ms, ${embedded} embedded, ${slugs.length - embedded} reused`);

@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: 78b4c4c911e08af6
 ---
 
 # How to brief sub-agents and pick the right model

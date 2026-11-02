@@ -244,6 +244,34 @@ if (memoryCount >= MIN_MEMORIES_TO_TRUST) {
 
 for (const p of spared) out('held back, too recent to be sure it is a deletion: ' + p);
 
+// The mod's shared context layers (layers/) are swept on their own, outside MIRRORED: no agent writes them on
+// a mirror (an agent's own layer lives in its local folder), and a layer removed on the host must leave this machine
+// or a retracted rule stays in every prompt here. Loaded softly: a run whose copy of layers-dist.mjs has not arrived
+// yet updates the files and sweeps on the next run.
+try {
+  const { layerOrphans } = await import('./layers-dist.mjs');
+  for (const rel of layerOrphans(BRAIN, published)) orphans.push(rel);
+} catch { /* layers-dist.mjs not here yet */ }
+
+// A file the server sent before and no longer lists was removed on the server (2026-11-02: two hooks removed there
+// stayed on a laptop's mirror, which is its plugin source, so every plugin update copied them back). Only paths this tool itself recorded as delivered are candidates, so a file
+// made on this machine is never touched; they go to .sync-trash/ like every removal. A manifest less than half the
+// size of the previous one is not trusted for this.
+try {
+  const prev = JSON.parse(readFileSync(STATE, 'utf8'));
+  const prevPaths = Array.isArray(prev && prev.paths) ? prev.paths : [];
+  if (prevPaths.length && manifest.files.length >= prevPaths.length / 2) {
+    const have = new Set(orphans);
+    for (const rel of prevPaths) {
+      if (typeof rel !== 'string' || published.has(rel) || have.has(rel) || rel.includes('..')) continue;
+      if (existsSync(join(BRAIN, rel))) orphans.push(rel);
+    }
+  } else if (prevPaths.length) {
+    out('NOT removing files the server dropped: its list has ' + manifest.files.length + ' files, against '
+      + prevPaths.length + ' last time.');
+  }
+} catch { /* no state yet: nothing was delivered by this tool before */ }
+
 if (!stale.length && !orphans.length) {
   if (remoteVersion) saveState(remoteVersion, manifest.files.map((f) => f.path));
   if (!QUIET) out('already current: ' + manifest.files.length + ' files match the server');

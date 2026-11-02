@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: ca7c94bd489edfde
 ---
 
 # How to start a new project

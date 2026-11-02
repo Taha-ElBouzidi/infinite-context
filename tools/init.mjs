@@ -219,16 +219,15 @@ say('seeded ' + written + ' behaviour rule(s) as memories');
 // assistant applies them with judgment. The owner, 2026-09-26: "skills shouldn't be triggered like a
 // skill that you follow point for point, they should be memory on how to do stuff, indirectly."
 // Templates and long reference files stay in kit/files, where these memories point.
+// Since 2026-11-02 the copy is done by tools/kit.mjs, the same code an update uses: it records what it installed, so a
+// later update can tell a method the user changed from one never touched, and even with --force it never overwrites
+// a method the user changed (the kit version waits in kit-updates/ instead).
 const kitMem = join(BRAIN, 'kit', 'memory');
 if (existsSync(kitMem)) {
-  let howto = 0;
-  for (const f of readdirSync(kitMem).filter((n) => n.endsWith('.md'))) {
-    const dest = join(memDir, f);
-    if (existsSync(dest) && !FORCE) continue;
-    writeFileSync(dest, readFileSync(join(kitMem, f), 'utf8').split('asserted: 2026-09-26').join('asserted: ' + today).split('updated: 2026-09-26').join('updated: ' + today), 'utf8');
-    howto += 1;
-  }
-  say('seeded ' + howto + ' how-to memories (kit/memory)');
+  const { refreshKit } = await import('./kit.mjs');
+  const r = refreshKit({ brain: BRAIN, today, init: true, force: FORCE });
+  say('seeded ' + r.added.length + ' how-to memories (kit/memory)'
+    + (r.waiting.length ? '; ' + r.waiting.length + ' you changed were kept, their new versions wait in kit-updates/' : ''));
 }
 
 // ---- semantic recall, ON by default ------------------------------------------------------------

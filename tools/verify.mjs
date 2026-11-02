@@ -16,7 +16,7 @@
 
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { execFileSync, execSync , spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -147,6 +147,19 @@ try {
   bad('hooks/hooks.json is missing or not valid JSON: ' + e.message);
 }
 
+// 5b. hooks.json names only hooks/dispatch.mjs since 2026-11-02 (the mod does the jobs, the old hooks are its
+// backup): every old hook the dispatcher runs as the backup must exist too, or the backup is silently gone.
+if (existsSync(join(BRAIN, 'hooks', 'dispatch.mjs'))) {
+  try {
+    const { JOBS } = await import(pathToFileURL(join(BRAIN, 'hooks', 'dispatch.mjs')).href);
+    const missing = [...new Set(Object.values(JOBS).flat().map((j) => j.file))].filter((f) => !existsSync(join(BRAIN, 'hooks', f)));
+    if (missing.length) bad('hooks/dispatch.mjs runs missing backup hook(s): ' + missing.join(', '));
+    else ok('every backup hook hooks/dispatch.mjs runs exists');
+  } catch (e) {
+    bad('hooks/dispatch.mjs could not be loaded: ' + String(e.message).split(String.fromCharCode(10))[0]);
+  }
+}
+
 // The always-on behaviour rules are generated from memory frontmatter into index/rules.json and
 // injected by hooks/pre-turn.mjs on every turn. If that file goes missing or empties out, every
 // agent silently loses every behaviour rule and nothing anywhere errors.
@@ -243,6 +256,8 @@ try {
     try {
       const rr = JSON.parse(readFileSync(join(BRAIN, 'index', 'rules.json'), 'utf8')).rules || [];
       for (const r of rr) {
+        // A topic rule (rule_when) is printed only on a matching message, so the generic test message cannot carry it.
+        if (r.when) continue;
         const t = String(r.rule || '').trim();
         if (t.length > 30) MUST_CONTAIN[r.slug] = t.slice(-30);
       }

@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: 32cd6a8bdb940743
 ---
 
 # How to handle meetings and follow-ups

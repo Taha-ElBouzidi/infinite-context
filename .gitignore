@@ -9,6 +9,10 @@ memory/MEMORY.md
 .sync-trash/
 *.log
 .pull-from-server.state
+# Automatic updates (tools/update.mjs) and the kit methods installed in memory/ (tools/kit.mjs)
+.update-state.json
+.update.lock
+.kit-state.json
 
 # Your own instance configuration and data. Keep them in your fork if you want them tracked;
 # they never belong in the upstream engine repository.

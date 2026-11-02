@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: a9915c87495e2b0b
 ---
 
 # How to make a presentation deck that prints to PDF

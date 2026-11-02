@@ -2,6 +2,76 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.80
+
+Privacy and safety review before publishing. Nothing here touches your memories.
+
+- **Your memories are never pushed to this repository.** In an install, saving pushes only to a backup remote you name in `brain.json` (`"backupRemote"`, a private repository of your own), never to `origin` by default, so a clone of this repository or a public fork never receives them. Without one, the save commits locally and says so in one line.
+- **Saving memories no longer blocks updates.** Commits that only hold memories are merged with the release; a commit that changes engine files still holds the update and says how to merge by hand.
+- **Session start no longer changes other settings.** In an install it never merges permission settings into `~/.claude/settings.json`, never edits another tool's configuration (`~/.gemini`), and arms the git gate only where `hooks/git` exists.
+- **No mod, no mod files.** Without the optional Claude Code mod, the hooks write nothing under `~/.claude/havok-mod` and start no sender.
+- **Memory writes are recognised in any folder name**, so a clone named `infinite-context` settles its learned items like any other.
+- **Prompt collection stays off.** The `/usage` route and the client that feeds it record only inside a window set in `usage-collection.json`, which no install has; without that file nothing is collected.
+- **Plainer texts.** Runtime messages and comments no longer name the maintainers' machines, agents or tools.
+
+## 0.4.79
+
+This release brings automatic updates. It is the last one you install by hand: `git pull`, then
+`node tools/kit.mjs refresh` and `node tools/verify.mjs`. Nothing here touches your memories.
+
+- **Updates install themselves.** While you use your assistant, the recall hook checks at most once a day, in the background, for a newer release (a tag on `main`, never another branch), installs it, runs verify and goes back on its own if the update brought a failure. You are told once, in one line, what changed. It refuses any release that would put a file in `memory/` or overwrite a file of yours, and waits when you changed an engine file the release also changes. `node tools/update.mjs --off` turns it off, `--notify` makes it tell without installing, `--status` shows the last result. The check is one `git ls-remote` a day, so GitHub's API limits never apply.
+- **Kit methods stay current.** Every how-to memory in the kit carries a version and a content hash. An update refreshes the copies you never changed; for one you changed, yours stays as it is and the new version waits in `kit-updates/` (`node tools/kit.mjs accept <name>` takes it and keeps yours). A kit method you deleted is not brought back. `node tools/kit.mjs status` shows each one. Copies made by earlier installs are recognised too.
+- **Twelve new how-to memories.** Email in your own format, a first message to someone new, chat messages, video presentations, voice audio, writing a context for your agents, and how to use the system itself: recall, the vault, a shared git server, messages between agents, the shared contexts and their levels, and cleaning up the context. 26 in all.
+- **Context templates.** `kit/files/context-templates/` has a starting structure for a global, machine, group and agent context, with placeholders, following the new method for writing one.
+- **init no longer overwrites a kit method you changed**, even with `--force`, and dates the methods it installs with the install day.
+
+## 0.4.52
+
+This release catches the public repository up with a long run of changes. Nothing here touches your memories.
+
+- **Helpers share the brain.** Every helper agent now starts with a short block that tells it the brain exists and how to search it, and recall is added to each message you send to a helper that is already running, so helpers stop working from nothing.
+- **Writing slips become a note, not a rewrite.** When the assistant breaks one of your writing rules (for example a banned punctuation mark), it no longer gets forced to redo the whole reply. The slip is noted and shown to it on the next message.
+- **The recall gate lets a messaging relay through.** Messages that arrive through an automated relay are no longer blocked while recall is being checked.
+- **Early compaction and agent-written recall are rolled back.** Both added surprises without helping, so compaction and recall are back to the earlier, simpler behaviour.
+- **Antigravity (agy) gets the brain.** Setting up agents now gives Antigravity the brain tool and the automatic recall hook, on every machine. If you connect several agents to one brain, they all get it.
+- **Plugin and repository share one version number**, so you can see at a glance that they match.
+
+## 0.4.15
+
+- **One memory, not two.** `AGENTS.md` has a new install step 5 and `CLAUDE.md` a short section: Claude Code's
+  built-in memory cannot be turned off, so it becomes a pointer to this repository and facts are written in one
+  place only. Two written stores drift apart silently; in the maintainer's own setup 31 of 35 shared files had
+  diverged. Found when a person installed this on their own account and their agent asked whether to save to both.
+
+## 0.4.14
+
+- **Agents search in their own words.** `node tools/brain-client.mjs recall <what you are about to do>` sends the
+  agent's own description of the task to the brain, and the recall rule tells agents to do it before a task.
+  The hook matches the person's raw words, which often do not name the task ("shoot the courier a note" never says
+  email). Measured on 8 how-to memories: casual requests found the method 3 of 8 times, the agent's intent
+  query 8 of 8, all first.
+
+## 0.4.13
+
+- **Email draft checker.** `tools/email-check.mjs draft.txt [--first]` fails a draft on length (50 to 125
+  words on a first contact), more than two questions, any numbered or bulleted list, a sentence over 30
+  words, common AI phrases, signs of price shopping in supplier mail, a long subject, and French without
+  accents. Length and question figures come from the Boomerang study of 40 million emails.
+- **Saves no longer slow the server.** Embeddings are rebuilt only for memories whose text changed, and the
+  save runs below normal priority.
+
+## 0.4.12
+
+- **One timeout per turn, not two, when the server is down.** A rules call that cannot reach the server now
+  marks it down, so recall on the same turn goes straight to its fallback. Measured on a laptop with the
+  server unreachable: 12.2 s for that turn before the change.
+
+## 0.4.11
+
+- **Rules survive a missed server call.** A machine that keeps no memories gets its behaviour rules from the
+  server; the hook now keeps the last set it received and uses it, saying so, when the server does not
+  answer. One timeout right after a restart used to leave that turn with no rules at all.
+
 ## 0.4.10
 
 - **A secret read no longer holds up the server.** The vault decrypt runs as an async child process, so

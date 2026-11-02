@@ -2,10 +2,11 @@
 // REAL pull result (no false "synced" on failure), and report brain health.
 // Injects a short note as additionalContext. Fails open and never blocks a session.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname } from 'node:os';
+import { mergeSharedSettings, wireAntigravity, wantsGitHooks } from '../tools/session-setup.mjs';
 
 // ONE brain per machine, resolved, never assumed.
 //
@@ -139,6 +140,17 @@ try {
   }
 } catch { /* no brain.json or settings: never block a session over this */ }
 
+// The shared Claude Code settings (hooks/claude-settings.json, where an instance has one) and the Antigravity wiring
+// live in tools/session-setup.mjs. In an install of the public repository neither touches the user's settings or
+// another tool's config (privacy review of 0.4.80, 2026-11-02).
+try {
+  const changed = mergeSharedSettings({ here: HERE, home: homedir() });
+  if (changed.length) notes.push('Applied the shared Claude Code settings (hooks/claude-settings.json) to ~/.claude/settings.json: ' + changed.join(', ')
+    + '. The permission mode applies to sessions started from now on; restart a session that is still in auto mode.');
+} catch { /* a missing or unreadable file must never block a session */ }
+
+try { wireAntigravity({ here: HERE, home: homedir() }); } catch { /* never block a session start */ }
+
 // Warn about any OTHER brain copy on this machine that is badly out of date.
 //
 // Two clones were known about and are handled. A red-team pass on 2026-08-18 found a THIRD:
@@ -208,15 +220,27 @@ try {
 // the machine, and it costs about 200MB resident. The liveness marker is the same file the
 // per-turn hook stats, so a stale marker from a hard kill self-heals here.
 try {
+  // BEGIN embedMarkerCheck (tools/test-recall-note.mjs runs this exact text)
   const alive = resolve(homedir(), '.claude', 'havok-embed.alive');
   const server = join(BRAIN, 'tools', 'embed-server.mjs');
+  const embedPort = process.env.HAVOK_EMBED_PORT || 8477;
   let running = false;
   if (existsSync(alive)) {
-    // Trust but verify: the marker can outlive a hard-killed process.
-    const probe = runIn(BRAIN, 'curl -s --connect-timeout 1 --max-time 2 http://127.0.0.1:8477/health', 4000);
-    running = probe.ok && probe.out.includes('"ok"');
+    // Trust but verify: the marker can outlive a hard-killed process. But a daemon that is only BUSY (its one
+    // thread inside a cold recall) also misses a 2 s /health, and deleting its marker took the per-turn hook's
+    // fallback away for the rest of the day (2026-10-31: gone from morning to night, daemon healthy). A busy
+    // daemon still takes the TCP connection at once and a dead one never does, so the connect time decides.
+    // A probe that learned nothing (no output at all) keeps the marker rather than guess.
+    let out = '';
+    try {
+      out = execFileSync('curl', ['-s', '-w', '\\n%{http_code} %{time_connect}', '--connect-timeout', '1', '--max-time', '2',
+        'http://127.0.0.1:' + embedPort + '/health'], { encoding: 'utf8', timeout: 4000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch (e) { out = String((e && e.stdout) || ''); }
+    const [code, connect] = (out.trim().split(/\r?\n/).pop() || '').split(' ');
+    running = !out.trim() || (code === '200' ? out.includes('"ok"') : Number(connect) > 0);
     if (!running) { try { unlinkSync(alive); } catch {} }
   }
+  // END embedMarkerCheck
   if (!running && existsSync(server)) {
     if (!noLocalBrain && !existsSync(join(BRAIN, 'node_modules', '@xenova', 'transformers'))) {
       notes.push('Semantic recall is unavailable on this machine: run npm install in ' + BRAIN.split(String.fromCharCode(92)).join('/') + ' to enable it. Recall falls back to keyword only until then.');
@@ -527,7 +551,8 @@ if (noLocalBrain) {
 // carried by git, so a machine that pulls the brain would get hooks/git/pre-commit as an
 // inert file and commit straight past the gate. Setting it here means every machine arms
 // itself on its next session with no manual step. Idempotent and silent when already set.
-const hp = noLocalBrain ? { ok: true, out: 'hooks/git' } : tryRun('git config --get core.hooksPath', 5000);
+// Only where hooks/git exists: pointing at a missing folder would switch off every git hook of the clone.
+const hp = noLocalBrain || !wantsGitHooks(BRAIN) ? { ok: true, out: 'hooks/git' } : tryRun('git config --get core.hooksPath', 5000);
 if (!hp.ok || hp.out !== 'hooks/git') {
   const set = tryRun('git config core.hooksPath hooks/git', 5000);
   if (set.ok) notes.push('Armed the brain git pre-commit gate on this machine (core.hooksPath).');
@@ -555,7 +580,7 @@ try {
 // no local model, an index repaired from the server, no brain.json. Skip it, say why.
 const vr = serverOnly ? { ok: true, out: '' } : tryRun('node "' + BRAIN.split(String.fromCharCode(92)).join('/') + '/tools/verify.mjs" --quiet', 25000);
 const prLine = serverOnly
-  ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on SERVER and on every server write.'
+  ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on the brain host and on every server write.'
   : vr.ok ? 'Brain verify PASSED.' : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
 if (!vr.ok) {
   notes.push('Brain verification is failing. Fix before making other changes:');
@@ -613,7 +638,7 @@ if (noLocalBrain) {
 }
 
 const parts = [
-  'HAVOK BRAIN: ' + syncLine + ' ' + prLine + ' Enforcement hooks (no em dash, no emoji, secret scan) are active via the havok-brain plugin.',
+  'BRAIN: ' + syncLine + ' ' + prLine + ' Enforcement hooks (no em dash, no emoji, secret scan) are active via the havok-brain plugin.',
 ];
 if (notes.length) parts.push(notes.join('\n'));
 
@@ -668,6 +693,47 @@ if (reflex || router || hot) {
 } else {
   parts.push('WARNING: could not read REFLEX.md or memory/MEMORY.md. The brain is NOT loaded into this session. Read them manually from ' + BRAIN.replace(/\\/g, '/'));
 }
+
+// The hook input, kept for the parts below. Keep-warm no longer asks for a CronCreate timer here: the mod keeps a
+// session warm by itself (keepwarm-rules.mjs, the owner 2026-11-02).
+try { globalThis.__havokEv = readFileSync(0, 'utf8') || '{}'; } catch { /* no input */ }
+
+// SMART COMPACT, part 3 (The owner, 2026-10-06: "right after, the brain re-injects the open items"). A compact replaces the
+// conversation with a summary; this puts the live to-do list and the way back to exact facts in front of the agent again.
+try {
+  const ev2 = JSON.parse(globalThis.__havokEv || "{}");
+  if (ev2.source === "compact") {
+    let open = "";
+    try { open = readFileSync(join(BRAIN, "memory", "project_open_items.md"), "utf8").replace(/^---[\s\S]*?---\s*/, ""); } catch { /* client machine: recall brings it */ }
+    parts.push("", "===== AFTER COMPACT =====", "This conversation was just compacted into a summary. Exact facts are NOT in the summary: get them from the brain (recall, or read the memory), or from the full transcript at " + String(ev2.transcript_path || "").split(String.fromCharCode(92)).join("/") + " (read only the part you need, it is large).", ...(open ? ["", "OPEN ITEMS (memory/project_open_items.md):", open.slice(0, 6000)] : []));
+  }
+} catch { /* re-injection is a help, never a blocker */ }
+
+// Claude Code's own memory instructions, pointed at the brain (The owner, 2026-10-23: "copy those instructions because they
+// are built by Claude experts, and direct them to our memory system ... and turn off the Claude memory system").
+// autoMemoryEnabled is false in hooks/claude-settings.json, which removes Claude's version; this puts ours in its place
+// on every start, resume and compaction, with the commands that work on this machine.
+try {
+  const fwd = (p) => p.replace(/\\/g, '/');
+  const t = fwd(resolve(HERE, 'tools'));
+  const local = !noLocalBrain;
+  const fill = {
+    WHERE: local
+      ? 'The memories are files in `' + fwd(BRAIN) + '/memory/`. Write them there with the Write tool.'
+      : 'The memories live on the brain server only; this machine keeps no copy and must never create files under memory/. Write one by putting it in a temporary file, then `node "' + t + '/brain-client.mjs" write <slug> --file <path>`.',
+    SAVE: local
+      ? 'After writing, run `node tools/save-brain.mjs "<what changed>"` from ' + fwd(BRAIN) + ': it indexes, verifies, commits and pushes in the background.'
+      : 'The server indexes and backs up what you write, in the background.',
+    CHECK: local
+      ? 'run `node tools/neuron-check.mjs --desc "<description>"` from ' + fwd(BRAIN) + ' (0.75 or more means it is already there).'
+      : 'run `node "' + t + '/brain-client.mjs" search "<description>"` and read the close matches.',
+    REPLACE: local
+      ? '`node tools/replace-memory.mjs <old> <new> --why "<reason>"`'
+      : 'write the corrected one, then `node "' + t + '/brain-client.mjs" delete <old> --why "<reason>"`',
+  };
+  const mi = readFileSync(resolve(HERE, 'hooks', 'memory-instructions.md'), 'utf8').replace(/\{\{(\w+)\}\}/g, (m, k) => fill[k] || m);
+  parts.push('', mi.trim());
+} catch { /* the brain block above still says how to write a memory */ }
 
 const out = {
   hookSpecificOutput: {

@@ -24,7 +24,7 @@
 // data key with its own private key, which never leaves it and is never shared with anything.
 //
 // Consequences worth stating:
-//   - Per-secret, per-machine access. `set --to the host,a laptop client` simply omits the laptop, and
+//   - Per-secret, per-machine access. `set --to <machine>,<machine>` simply omits the laptop, and
 //     the laptop is then refused by cryptography, not by policy. age answers "no identity matched
 //     any of the recipients".
 //   - Adding a machine never re-encrypts a secret. A machine that already has access unwraps the
@@ -57,7 +57,7 @@
 //     leaked it, and a leaked secret is burned: rotate the real credential, not just this entry.
 
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, readdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, readdirSync, unlinkSync, openSync, closeSync, fsyncSync, renameSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
@@ -131,7 +131,57 @@ const loadVault = () => (existsSync(VAULT)
   ? JSON.parse(readFileSync(VAULT, 'utf8'))
   : { version: 2, secrets: {} });
 
-const saveVault = (v) => writeFileSync(VAULT, JSON.stringify(v, null, 2) + NL, 'utf8');
+const sleepMs = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+// ATOMIC (audit 2026-11-01). Written in place, a crash or the nightly reboot mid-write left a half vault.json, and any
+// read in that window (the server's /vault/list, a get) failed: the test caught 7 torn reads in 8 stores. A reader now
+// sees the old file or the new one, never a mix.
+function writeAtomic(file, text) {
+  const tmp = file + '.' + process.pid + '.tmp';
+  const fd = openSync(tmp, 'w');
+  try { writeFileSync(fd, text, 'utf8'); fsyncSync(fd); } finally { closeSync(fd); }
+  for (let n = 1; ; n += 1) {
+    try { renameSync(tmp, file); return; } catch (e) {
+      // Windows refuses the replace for a moment while another program holds the file open.
+      if (n >= 40 || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code)) { try { unlinkSync(tmp); } catch { /* best effort */ } throw e; }
+      sleepMs(Math.min(25 * n, 250));
+    }
+  }
+}
+
+const saveVault = (v) => writeAtomic(VAULT, JSON.stringify(v, null, 2) + NL);
+
+// ONE WRITER AT A TIME (audit 2026-11-01). Every command that changes vault.json read it, worked (one age call per
+// machine for a store), then wrote it back whole, so six stores in the same second kept ONE secret and told all six
+// callers "stored". Each such command now takes this lock just before it reads and keeps it until it exits; the slow
+// encryption of a store happens before. A holder that died (pid gone) or hung past VAULT_LOCK_STALE_MS is cleared.
+const VAULT_LOCK = VAULT + '.lock';
+const VAULT_LOCK_WAIT_MS = 60000;
+const VAULT_LOCK_STALE_MS = 120000;
+const VAULT_LOCK_UNREADABLE_MS = 5000;
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+function lockVault() {
+  const me = process.pid + ' ' + Date.now();
+  const until = Date.now() + VAULT_LOCK_WAIT_MS;
+  for (let n = 1; ; n += 1) {
+    try {
+      const fd = openSync(VAULT_LOCK, 'wx');
+      try { writeFileSync(fd, me, 'utf8'); } finally { closeSync(fd); }
+      process.on('exit', () => { try { if (readFileSync(VAULT_LOCK, 'utf8') === me) unlinkSync(VAULT_LOCK); } catch { /* cleared as stale */ } });
+      return;
+    } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    let raw = '';
+    let age = 0;
+    try { raw = readFileSync(VAULT_LOCK, 'utf8'); age = Date.now() - statSync(VAULT_LOCK).mtimeMs; } catch { continue; }
+    const pid = Number(raw.split(' ')[0]);
+    if ((pid && !pidAlive(pid)) || age > VAULT_LOCK_STALE_MS || (!pid && age > VAULT_LOCK_UNREADABLE_MS)) {
+      try { if (readFileSync(VAULT_LOCK, 'utf8') === raw) unlinkSync(VAULT_LOCK); } catch { /* gone already */ }
+      continue;
+    }
+    if (Date.now() > until) die('vault.json is busy: another vault command (pid ' + pid + ') has held it for ' + Math.round(age / 1000) + ' s. Try again.');
+    sleepMs(Math.min(10 * n, 200));
+  }
+}
 
 const loadRecipients = () => (existsSync(RECIPIENTS)
   ? JSON.parse(readFileSync(RECIPIENTS, 'utf8'))
@@ -295,6 +345,7 @@ if (cmd === 'machine-init') {
   if (!r.machines[key]) die('No machine named "' + key + '"');
   delete r.machines[key];
   saveRecipients(r);
+  lockVault();
   const v = loadVault();
   let stripped = 0;
   for (const box of Object.values(v.secrets)) {
@@ -354,6 +405,7 @@ if (cmd === 'machine-init') {
   if (!/^age1[0-9a-z]{50,}$/.test(req.pubkey)) die('The request does not contain a valid age public key.');
   r.machines[key] = { pubkey: req.pubkey, added: today(), note: req.note || '' };
   saveRecipients(r);
+  lockVault();
   const v = loadVault();
   let done = 0; const skipped = [];
   for (const [n, box] of Object.entries(v.secrets)) {
@@ -389,11 +441,19 @@ if (cmd === 'machine-init') {
     die('No value on stdin. Pipe it in, never pass it as an argument: argv is visible to other '
       + 'processes and lands in shell history.');
   }
+  const targets = resolveRecipients();
+  const box = encryptV2(value, pubkeysOf(targets));
+  lockVault();
   const v = loadVault();
   const existed = !!v.secrets[name];
-  const targets = resolveRecipients();
+  // --new: never replace. Decided here under the lock, because the server's own check runs earlier and a store
+  // landing in between was silently overwritten by a token that may only add.
+  if (existed && process.argv.includes('--new')) {
+    process.stderr.write('exists: ' + name + ' is already in the vault, not replaced' + NL);
+    process.exit(3);
+  }
   v.secrets[name] = {
-    ...encryptV2(value, pubkeysOf(targets)),
+    ...box,
     updated: today(),
     note: getFlag('note') || (v.secrets[name] && v.secrets[name].note) || '',
   };
@@ -432,6 +492,7 @@ if (cmd === 'machine-init') {
     }
     targets[raw] = reg[raw].pubkey;
   }
+  lockVault();
   const v = loadVault();
   const all = process.argv.includes('--all');
   const which = all ? Object.keys(v.secrets) : [name].filter(Boolean);
@@ -454,6 +515,7 @@ if (cmd === 'machine-init') {
   const from = getFlag('from');
   if (!from || !name) die('usage: vault.mjs revoke <secret>|--all --from MACHINE');
   const key = from.trim().toUpperCase();
+  lockVault();
   const v = loadVault();
   const which = process.argv.includes('--all') ? Object.keys(v.secrets) : [name];
   let n = 0;
@@ -481,6 +543,7 @@ if (cmd === 'machine-init') {
 
 } else if (cmd === 'rm') {
   if (!name) die('usage: vault.mjs rm <name>');
+  lockVault();
   const v = loadVault();
   if (!v.secrets[name]) die('No secret named "' + name + '"');
   delete v.secrets[name];
@@ -492,6 +555,7 @@ if (cmd === 'machine-init') {
   // decrypted, so a partial migration cannot lose a secret.
   requireAge();
   const pass = loadPassphrase(true);
+  lockVault();
   const v = loadVault();
   const v1 = Object.entries(v.secrets).filter(([, b]) => !isV2(b));
   if (!v1.length) { process.stderr.write('nothing to migrate, every secret is already v2' + NL); process.exit(0); }

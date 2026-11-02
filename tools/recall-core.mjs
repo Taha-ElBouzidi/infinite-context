@@ -6,7 +6,9 @@
 // version, and gets the same recall() the server has always run. The body below is moved, not rewritten.
 
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { terms as qterms } from './tokenize.mjs';
 
 // A message this short ("why", "ok do it") carries no topic of its own, so the conversation leads it
@@ -16,17 +18,6 @@ export const SHORT_FOLLOW_UP = 25;
 
 export function makeRecall({ brain, getEmbedder, indexVersion }) {
   const BRAIN = brain;
-  let idxCache = null;
-  function loadIndexes() {
-    const v = indexVersion();
-    if (idxCache && idxCache.v === v.version) return idxCache;
-    idxCache = {
-      v: v.version,
-      kw: JSON.parse(readFileSync(join(BRAIN, 'index', 'keywords.json'), 'utf8')),
-      emb: JSON.parse(readFileSync(join(BRAIN, 'index', 'embeddings.json'), 'utf8')),
-    };
-    return idxCache;
-  }
 
   // Every constant here is measured, and the measurements live in hooks/pre-turn.mjs next to the
   // original. Changing one without re-running tools/eval-recall.mjs is how a tuned system silently
@@ -79,9 +70,78 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
   const MEANING_K = 5;
   const MEANING_FLOOR = 0.55;
 
-  let graphCache = null;
-  function linkGraph(emb, version) {
-    if (graphCache && graphCache.v === version) return graphCache.g;
+  let partBar = null, partLinkBar = null;
+
+  /* NO FREEZE WHEN THE INDEX CHANGES (2026-10-31, the owner: "we need to fix the freeze"). Recall reads one snapshot
+     of everything it needs (keywords, vectors, link graph, contacts) that belongs to one index version. When the
+     version changes, the next snapshot is built in the background, the link graph on a worker thread (it was 1.8 s
+     on the only thread, 17.7 s under load, and every request of the brain server waited behind it), and recall
+     keeps answering from the current snapshot until the new one is complete; then it takes over in one step. Only
+     the very first recall after a start waits for a build. A worker that fails falls back to the old way on this
+     thread, so recall never stops working, and says so on stderr. */
+  let current = null, currentSeq = 0, building = null, buildSeq = 0;
+  function graphFromEdges(n, from, to, weight) {
+    const g = Array.from({ length: n }, () => new Map());
+    for (let e = 0; e < from.length; e++) g[from[e]].set(to[e], weight[e]);
+    return g;
+  }
+  // A worker that never answers, or exits without answering, was waited on forever: the first recall after a start
+  // never returned (audit 2026-11-01, tools/recall-snapshot.test.mjs). Far above the 17.7 s measured under load.
+  const GRAPH_TIMEOUT_MS = Number(process.env.RECALL_GRAPH_TIMEOUT_MS || 120000);
+  function graphInWorker(emb) {
+    const n = emb.slugs.length;
+    const dim = n ? emb.vectors[0].length : 0;
+    const vectors = new Float64Array(n * dim);
+    for (let i = 0; i < n; i++) vectors.set(emb.vectors[i], i * dim);
+    return new Promise((ok, fail) => {
+      const w = new Worker(new URL('./recall-graph-worker.mjs', import.meta.url), {
+        workerData: { brain: BRAIN, slugs: emb.slugs, dim, vectors, meaningK: MEANING_K, meaningFloor: MEANING_FLOOR },
+        transferList: [vectors.buffer],
+      });
+      const timer = setTimeout(() => { w.terminate(); fail(new Error('graph worker gave no answer in ' + GRAPH_TIMEOUT_MS + ' ms')); }, GRAPH_TIMEOUT_MS);
+      w.once('message', (m) => { clearTimeout(timer); ok({ graph: graphFromEdges(n, m.from, m.to, m.weight), contacts: new Map(m.contacts) }); });
+      w.once('error', (e) => { clearTimeout(timer); fail(e); });
+      // After an answer this settles nothing; before one it is a failure whatever the exit code.
+      w.once('exit', (code) => { clearTimeout(timer); fail(new Error('graph worker exited with code ' + code + ' before answering')); });
+    });
+  }
+  async function buildSnapshot(v) {
+    const [kwRaw, embRaw] = await Promise.all([
+      readFile(join(BRAIN, 'index', 'keywords.json'), 'utf8'),
+      readFile(join(BRAIN, 'index', 'embeddings.json'), 'utf8'),
+    ]);
+    const kw = JSON.parse(kwRaw);
+    const emb = JSON.parse(embRaw);
+    let parts;
+    try { parts = await graphInWorker(emb); }
+    catch (e) {
+      process.stderr.write('recall: graph worker failed (' + String(e && e.message).slice(0, 160) + '), building on the main thread\n');
+      parts = { graph: linkGraph(emb), contacts: contactsByFirstName(emb) };
+    }
+    return { v, kw, emb, graph: parts.graph, contacts: parts.contacts };
+  }
+  async function snapshot() {
+    const v = indexVersion().version;
+    if (current && current.v === v) return current;
+    // ONE BUILD AT A TIME (audit 2026-11-01): every new version seen started another full build beside the running
+    // one, 13 workers at once in a probe of a save burst. A newer version now waits for the running build; the first
+    // recall after it ends starts the next one.
+    if (!building) {
+      const seq = ++buildSeq;
+      const promise = buildSnapshot(v).then((s) => {
+        if (seq > currentSeq) { current = s; currentSeq = seq; }
+        return s;
+      }).finally(() => { if (building && building.seq === seq) building = null; });
+      building = { v, seq, promise };
+      // A background build that fails is not this request's problem; the next request tries again.
+      if (current) promise.catch((e) => process.stderr.write('recall: index rebuild failed (' + String(e && e.message).slice(0, 160) + ')\n'));
+    }
+    if (current) return current;
+    return building.promise;
+  }
+
+  // The same work as the worker, on this thread: only the fallback when a worker cannot run.
+  function linkGraph(emb) {
     const n = emb.slugs.length;
     const at = new Map(emb.slugs.map((s, i) => [s, i]));
     const g = Array.from({ length: n }, () => new Map());
@@ -103,15 +163,11 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
       sims.sort((a, b) => b[1] - a[1]);
       for (const [j, d] of sims.slice(0, MEANING_K)) if (d >= MEANING_FLOOR) link(i, j, d);
     }
-    graphCache = { v: version, g };
     return g;
   }
 
-  // First name to contact memories, read once per index version rather than on every question.
-  let contactsCache = null;
+  // First name to contact memories, built once per snapshot (the fallback twin of the worker's map).
   function contactsByFirstName(emb) {
-    const v = idxCache ? idxCache.v : null;
-    if (contactsCache && contactsCache.v === v) return contactsCache.map;
     const map = new Map();
     for (const s of emb.slugs.filter((x) => x.startsWith('contact_'))) {
       let nm = '';
@@ -119,7 +175,6 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
       const first = (nm.replace(/^contact_/, '').split(/[\s,_-]+/)[0] || '').toLowerCase();
       if (first.length >= 3) map.set(first, (map.get(first) || []).concat([s]));
     }
-    contactsCache = { v, map };
     return map;
   }
 
@@ -142,7 +197,8 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
   }
 
   async function recall(prompt, queries, limit, bodyChars = 0, explicitLimit = true, parts = 0, contextIndex = -1) {
-    const { kw, emb } = loadIndexes();
+    const snap = await snapshot();
+    const { kw, emb } = snap;
     let qEmb = null;
     try { qEmb = JSON.parse(readFileSync(join(BRAIN, 'index', 'question-embeddings.json'), 'utf8')); }
     catch { /* no questions written yet, which is the state every brain starts in */ }
@@ -228,7 +284,7 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
     if (RECALL_MODE === 'threshold' && !explicitLimit && embedded) {
       chosen = ranked.slice(0, ALWAYS_FUSED).map(([s]) => s);
       const meaning = emb.slugs.map((s, i) => [s, Math.max(best[i], qBest.get(s) ?? -Infinity, ctxBest[i] * CONTEXT_WEIGHT)])
-        .filter(([, v]) => v >= MEANING_BAR).sort((a, b) => b[1] - a[1]);
+        .filter(([, v]) => v >= (partBar ?? MEANING_BAR)).sort((a, b) => b[1] - a[1]);
       for (const [s] of meaning) if (!chosen.includes(s)) chosen.push(s);
       // EACH PART OF A MESSAGE BRINGS ITS OWN BEST MEMORIES (2026-09-26). The hook sends the whole message
       // first, then its parts (queries 1..parts), then the conversation. A long message touches many topics,
@@ -276,16 +332,20 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
       // 0.2 more memories on average. RECALL_ENTITY=0 turns it off.
       if (process.env.RECALL_ENTITY !== '0') {
         const words = new Set(String(prompt).toLowerCase().match(/[a-zà-ÿ]{3,}/g) || []);
-        for (const [first, ss] of contactsByFirstName(emb)) if (ss.length === 1 && words.has(first) && !chosen.includes(ss[0])) chosen.push(ss[0]);
+        for (const [first, ss] of snap.contacts) if (ss.length === 1 && words.has(first) && !chosen.includes(ss[0])) chosen.push(ss[0]);
       }
       const at = new Map(emb.slugs.map((s, i) => [s, i]));
       const seed = new Array(emb.slugs.length).fill(0);
       for (const [s, v] of fused) if (at.has(s)) seed[at.get(s)] = v;
-      const act = spreadActivation(seed, linkGraph(emb, idxCache.v));
+      const act = spreadActivation(seed, snap.graph);
       let strongest = 0;
       for (const v of act) if (v > strongest) strongest = v;
       emb.slugs.map((s, i) => [s, act[i]])
-        .filter(([s, v]) => !chosen.includes(s) && v > 0 && v >= strongest * LINK_BAR && v >= LINK_FLOOR / emb.slugs.length)
+        // RECALL_LINK_MEANING_MIN (experiment, off at 0): a linked memory is accepted only if its own meaning match with
+        // the message is at least this, so a link cannot bring in a memory that has nothing to do with what was asked.
+        // The owner, 2026-10-11: no limit of any kind, "we need to adapt the threshold at which the memories get accepted".
+        .filter(([s]) => { const m = Number(process.env.RECALL_LINK_MEANING_MIN || 0); return m <= 0 || best[at.get(s)] >= m; })
+        .filter(([s, v]) => !chosen.includes(s) && v > 0 && v >= strongest * (partLinkBar ?? LINK_BAR) && v >= LINK_FLOOR / emb.slugs.length)
         .sort((a, b) => b[1] - a[1])
         .forEach(([s]) => { chosen.push(s); linked.add(s); });
     }
@@ -299,12 +359,39 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
     if (RECALL_MODE === 'threshold' && !explicitLimit && SPLIT_MIN > 0 && String(prompt).length >= SPLIT_MIN) {
       for (let qi = 1; qi <= Math.min(parts, queries.length - 1); qi++) {
         if (contextIndex >= 0 && qi >= contextIndex) continue;
-        for (const h of await recall(queries[qi], [queries[qi]], limit, 0, false, 0, -1)) {
+        // EXPERIMENT SWITCHES, off by default (2026-10-11): real long messages return 60 memories on average
+        // because every part brings its own links. RECALL_PART_LINKS=0 drops the linked memories of a part,
+        // RECALL_PART_BAR sets a stricter meaning bar for a part than for the whole message, RECALL_PART_LINK_BAR a
+        // stricter link bar (share of the strongest activation) for a part.
+        const pb = Number(process.env.RECALL_PART_BAR || 0);
+        if (pb > 0) partBar = pb;
+        const plb = Number(process.env.RECALL_PART_LINK_BAR || 0);
+        if (plb > 0) partLinkBar = plb;
+        let sub; try { sub = await recall(queries[qi], [queries[qi]], limit, 0, false, 0, -1); } finally { partBar = null; partLinkBar = null; }
+        // RECALL_PART_LINK_TOP (experiment): a part keeps only its N strongest linked memories.
+        const plt = Number(process.env.RECALL_PART_LINK_TOP || 0); let partLinked = 0;
+        for (const h of sub) {
+          if (plt > 0 && h.how === 'linked' && ++partLinked > plt) continue;
+          if ((process.env.RECALL_PART_LINKS === '0' || process.env.RECALL_PART_LINKS === 'global') && h.how === 'linked') continue;
           if (chosen.includes(h.slug)) continue;
           chosen.push(h.slug);
           if (h.how === 'linked') linked.add(h.slug);
         }
       }
+    }
+    // RECALL_PART_LINKS=global (experiment): the parts bring only their direct matches, then the links are followed
+    // ONCE from everything chosen, with one bar relative to the strongest, instead of once per part.
+    if (process.env.RECALL_PART_LINKS === 'global' && RECALL_MODE === 'threshold' && !explicitLimit && SPLIT_MIN > 0 && String(prompt).length >= SPLIT_MIN && parts > 0) {
+      const at2 = new Map(emb.slugs.map((s, i) => [s, i]));
+      const seed2 = new Array(emb.slugs.length).fill(0);
+      chosen.forEach((s, r) => { if (at2.has(s) && !linked.has(s)) seed2[at2.get(s)] = 1 / (RRF_K + r + 1); });
+      const act2 = spreadActivation(seed2, snap.graph);
+      let top2 = 0; for (const v of act2) if (v > top2) top2 = v;
+      const gb = Number(process.env.RECALL_GLOBAL_LINK_BAR || LINK_BAR);
+      emb.slugs.map((s, i) => [s, act2[i]])
+        .filter(([s, v]) => !chosen.includes(s) && v > 0 && v >= top2 * gb && v >= LINK_FLOOR / emb.slugs.length)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([s]) => { chosen.push(s); linked.add(s); });
     }
     return chosen
       .map((slug, rank) => {
@@ -333,5 +420,7 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
         return hit;
       });
   }
+  // Which index version recall is answering from now (null before the first build). Read by tests and /health.
+  recall.snapshotVersion = () => (current ? current.v : null);
   return recall;
 }

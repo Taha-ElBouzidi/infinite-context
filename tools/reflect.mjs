@@ -100,6 +100,8 @@ const mem = files.map((f) => {
     topType: topLevelType(raw),
     asserted: fm.asserted || null,
     outLinks: [...raw.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].trim()),
+    // A memory its author marked as having nothing real to link to (The owner, 2026-10-02). Not an orphan.
+    leaf: /^leaf:\s*true\s*$/m.test(raw.slice(0, raw.indexOf('\n---', 3) > 0 ? raw.indexOf('\n---', 3) : 0)),
   };
 });
 
@@ -133,7 +135,7 @@ for (const m of mem) {
   else if (!VALID.has(m.topType)) findings.mindmap.push(`${m.file} top-level type "${m.topType}" is not a valid region`);
 }
 
-for (const m of mem) if (!m.outLinks.length && inbound.get(m.file) === 0) findings.orphan.push(m.file);
+for (const m of mem) if (!m.leaf && !m.outLinks.length && inbound.get(m.file) === 0) findings.orphan.push(m.file);
 
 // Duplicate candidates: Jaccard overlap on content words of name + description.
 const tokens = (m) => new Set((m.name + ' ' + m.desc).toLowerCase()

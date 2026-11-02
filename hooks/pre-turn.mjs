@@ -36,6 +36,12 @@ import { createHash } from 'node:crypto';
 import { terms as qterms } from '../tools/tokenize.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 const HOOK_STARTED = Date.now();
+// The owner, 2026-10-16: "instead of 100,000 or 250, let's put it at 300,000 tokens". Same number as autoCompactWindow
+// in hooks/claude-settings.json.
+// Smart compaction rolled back 2026-10-22 (the owner: "it makes the agents dumber because they don't remember anything"):
+// the cue that asked him to approve a compaction from 300,000 tokens is off until a better way is tested.
+const SMART_COMPACTION = false;
+const COMPACT_FROM = 300000;
 
 // Synchronous HTTP to the local embed daemon.
 //
@@ -97,6 +103,64 @@ function translateSync(text, brainDir) {
 let LAST_SERVER_V = null;
 let RATE_LIMITED = false;
 let REMOTE = undefined;
+
+/* WHY SEMANTIC RECALL MISSED A TURN, as it happened, for the note. The owner, 2026-10-31: "these fake off happen a
+   lot we should diagnose them". The note said "semantic recall is OFF (embed server not running)" whatever
+   went wrong: 54 of 3175 turns on the host, while the daemon was healthy. Traced that day: the brain server took
+   17.7 s on its first recall after the index changed, the hook gave up at 9 s and marked it down for 3
+   minutes, and the daemon could not stand in because a session start that found it busy had deleted its alive
+   marker. So each path records what actually happened, and "not running" is said only after a probe finds
+   nothing listening. tools/test-recall-note.mjs. */
+const MISS = { remote: '', local: '' };
+const msLeft = () => HOOK_LIMIT_MS - HOOK_MARGIN_MS - (Date.now() - HOOK_STARTED);
+const EMBED_PORT = process.env.HAVOK_EMBED_PORT || 8477;
+
+function skippedWhy() {
+  const m = readRemoteDown();
+  if (!m) return 'the brain server was skipped';
+  const ago = Math.max(0, Math.round((Date.now() - m.at) / 1000));
+  const left = Math.max(0, Math.round((DOWN_COOLDOWN_MS - (Date.now() - m.at)) / 1000));
+  return 'the brain server failed ' + ago + ' s ago (' + m.reason + ') and is skipped for another ' + left + ' s';
+}
+
+function remoteFailWhy(e, elapsedMs, cfg, maxSec) {
+  if (e instanceof SyntaxError) return 'the brain server answered with something that is not JSON';
+  const timedOut = (e && e.code === 'ETIMEDOUT') || (e && e.status === 28);
+  if (!timedOut) return 'the brain server call failed: ' + curlWhy(e);
+  if (elapsedMs >= ((cfg && cfg.ct) || 1) * 1000 + 1000) return 'the brain server did not answer within ' + maxSec + ' s (busy, not off)';
+  return 'the brain server did not take the connection within ' + ((cfg && cfg.ct) || 1) + ' s (busy, or down)';
+}
+
+/* Is the local embed daemon up, busy, or down? Asked only on a turn that already missed semantic recall, never
+   on a healthy one. The exit code cannot tell busy from down on Windows: a closed localhost port also ends in
+   curl exit 28, after about 1.1 s, because Windows retries the connection (measured 2026-10-31). The connect
+   time can: a busy daemon still takes the TCP connection at once, a closed port never does. */
+let DAEMON_STATE = null;
+function daemonState(brain) {
+  if (DAEMON_STATE) return DAEMON_STATE;
+  // Only where the daemon is a real fallback: a machine holding the memories with the runtime installed. A
+  // server-only client (a laptop client) recalls through the brain server alone, so its daemon is beside the point.
+  if (!holdsMemoriesLocally(brain) || !existsSync(join(brain, 'node_modules', '@xenova', 'transformers'))) return (DAEMON_STATE = 'none');
+  if (msLeft() < 1500) return 'unknown';
+  let out = '';
+  try {
+    out = execFileSync('curl', ['-s', '-w', '\\n%{http_code} %{time_connect}', '--connect-timeout', '1', '--max-time', '1',
+      'http://127.0.0.1:' + EMBED_PORT + '/health'], { encoding: 'utf8', windowsHide: true, timeout: 2500, stdio: ['ignore', 'pipe', 'ignore'] });
+  } catch (e) { out = String((e && e.stdout) || ''); }
+  const [code, connect] = (out.trim().split('\n').pop() || '').split(' ');
+  DAEMON_STATE = code === '200' ? 'up' : Number(connect) > 0 ? 'busy' : out ? 'down' : 'unknown';
+  if (DAEMON_STATE === 'down') ensureEmbedDaemon(brain);
+  return DAEMON_STATE;
+}
+
+function semanticMissNote(brain) {
+  const why = [MISS.remote || (remoteRecentlyFailed() ? skippedWhy() : 'the brain server gave no usable answer')];
+  const d = daemonState(brain);
+  if (d === 'down') why.push('the local embed server is not running (nothing takes a connection on 127.0.0.1:' + EMBED_PORT + '). Start it: node tools/embed-server.mjs');
+  else if (d === 'busy') why.push('the local embed server is running but busy (it took the connection and did not answer within 1 s)');
+  else if (d === 'up' && MISS.local) why.push(MISS.local);
+  return 'NOTE: semantic recall missed this turn, so the recall below is keyword only and a paraphrase may not match. Why: ' + why.join('; ') + '.';
+}
 // Where the token comes from, cheapest source first.
 //
 // MEASURED 2026-08-22: reading it from the vault costs 155-165ms, because it spawns a node process
@@ -227,8 +291,27 @@ function fetchRulesRemote(brain) {
       + 'silent' + '\n' + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
     const out = curlRemote(conf, 6000, cfg);
     const parsed = JSON.parse(out || '{}');
-    return Array.isArray(parsed.rules) ? parsed.rules : null;
-  } catch { return null; }
+    if (Array.isArray(parsed.rules) && parsed.rules.length) {
+      try { writeFileSync(RULES_CACHE, JSON.stringify({ at: new Date().toISOString(), rules: parsed.rules }), 'utf8'); } catch { /* a cache that cannot be written is only a missed cache */ }
+      return parsed.rules;
+    }
+    return null;
+  } catch (e) {
+    // A rules call that could not reach the server marks it down, so recall on the same turn skips
+    // straight to its fallback instead of waiting out a second timeout: 12.2 s on the locked-down client machine when the
+    // server was unreachable (2026-09-28).
+    if (!(e instanceof SyntaxError)) markRemoteDown(curlWhy(e));
+    return null;
+  }
+}
+// THE LAST RULES THE SERVER SENT, kept on this machine (2026-09-28). A server-only machine has no
+// rules.json, so one failed round trip left the turn with no behaviour rules at all: seen on
+// the locked-down client machine right after a restart, when the first call timed out. Rules are not secret; memories
+// still come only from the server.
+const RULES_CACHE = resolve(process.env.HAVOK_HOME || resolve(homedir(), '.claude'), 'havok-rules-cache.json');
+function cachedRules() {
+  try { const c = JSON.parse(readFileSync(RULES_CACHE, 'utf8')); return Array.isArray(c.rules) && c.rules.length ? c.rules : null; }
+  catch { return null; }
 }
 
 // Remember that the server was unreachable, so a laptop off the network does not pay for the
@@ -357,6 +440,8 @@ function fetchVectorRemote(text, brain) {
     // Reached the server and got something that was not a vector. Almost always auth: a 401 body
     // parses fine and simply has no `vector`. Worth distinguishing, because "server unreachable"
     // and "token rejected" need completely different fixes.
+    // Rate limited is a busy server, not a bad token, and must not put it behind the 3 minute down mark.
+    if (parsedOne.error === 'too many requests') { RATE_LIMITED = true; return null; }
     if (parsedOne.error === 'unauthorized') forgetCachedToken();
     markRemoteDown('server answered without a vector, likely an expired or wrong token');
     return null;
@@ -396,6 +481,7 @@ function fetchVectorsRemote(texts, brain) {
       try { unlinkSync(REMOTE_DOWN); } catch { /* was not marked */ }
       return vs;
     }
+    if (parsed.error === 'too many requests') { RATE_LIMITED = true; return null; }
     if (parsed.error === 'unauthorized') forgetCachedToken();
     markRemoteDown('server answered without vectors, likely an expired or wrong token');
     return null;
@@ -434,22 +520,23 @@ function fetchVectorsRemote(texts, brain) {
 // with stdio ignored and unref'd: if the server is down, slow, or on the far side of a dead
 // relay, nothing here notices and the turn is already gone.
 function postPulse(hits, brain) {
+  if (!hits.length) return;
+  postJson('/pulse', { at: Date.now(), host: hostname(), slugs: hits.map((h) => h.slug), how: hits.map((h) => h.how) }, brain);
+}
+
+function postJson(route, body, brain) {
   try {
-    if (!hits.length) return;
     const cfg = remoteEmbedConfig(brain);
     if (!cfg) return;
-    const payload = JSON.stringify({
-      at: Date.now(), host: hostname(),
-      slugs: hits.map((h) => h.slug), how: hits.map((h) => h.how),
-    });
+    const payload = JSON.stringify(body);
     const conf = 'header = "content-type: application/json"' + '\n'
       + 'header = "Authorization: Bearer ' + cfg.token + '"' + '\n'
       + (cfg.cacert ? 'cacert = "' + cfg.cacert + '"' + '\n' : '')
       + (cfg.connectTo ? 'connect-to = "' + cfg.connectTo + '"' + '\n' : '')
-      + 'url = "' + cfg.url + '/pulse"' + '\n'
+      + 'url = "' + cfg.url + route + '"' + '\n'
       + 'request = "POST"' + '\n'
       + 'data-binary = "' + payload.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"' + '\n'
-      + 'silent' + '\n' + 'output = "/dev/null"' + '\n'
+      + 'silent' + '\n' + 'output = "' + (process.platform === 'win32' ? 'NUL' : '/dev/null') + '"' + '\n'
       + 'connect-timeout = ' + cfg.ct + '\n' + 'max-time = 6' + '\n';
     // CONFIG IN A FILE, NOT ON A PIPE. The first version wrote the config to an unref'd child's
     // stdin and returned immediately. That never delivered: on 2026-09-15 the locked-down client machine
@@ -495,26 +582,34 @@ function holdsMemoriesLocally(brain) {
    now runs the server's own code (tools/recall-core.mjs) behind /recall, so this asks it first and falls
    back to the local top 5 only when the daemon is down, older than the route, or serving another brain. */
 function fetchRecallLocal(prompt, queries, brain, parts = 0, contextIndex = -1) {
-  if (!existsSync(ALIVE)) return null;
+  // A missing marker is not proof the daemon is down: on 2026-10-31 it was gone all day while the daemon
+  // answered, because a session start that found the daemon busy deleted it. Ask the daemon itself.
+  if (!existsSync(ALIVE) && daemonState(brain) !== 'up') return null;
+  // Only what is left of the hook's limit: past it Claude Code drops the whole injection, rules included.
+  const budget = Math.min(6, Math.floor(msLeft() / 1000));
+  if (budget < 1) { MISS.local = 'no time was left to ask the local embed server'; return null; }
   try {
     const out = execFileSync("curl", [
-      "-s", "--connect-timeout", "1", "--max-time", "6", "-X", "POST",
-      "http://127.0.0.1:" + (process.env.HAVOK_EMBED_PORT || 8477) + "/recall",
+      "-s", "--connect-timeout", "1", "--max-time", String(budget), "-X", "POST",
+      "http://127.0.0.1:" + EMBED_PORT + "/recall",
       "-H", "content-type: application/json",
       "--data-binary", "@-",
     ], {
       input: Buffer.from(JSON.stringify({ brain, prompt: String(prompt).slice(0, 20000), queries, parts, contextIndex }), "utf8"),
-      encoding: "utf8", timeout: 6500, stdio: ["pipe", "pipe", "ignore"],
+      encoding: "utf8", timeout: budget * 1000 + 500, stdio: ["pipe", "pipe", "ignore"],
     });
     const parsed = JSON.parse(out || "{}");
-    return Array.isArray(parsed.ranked) ? parsed.ranked : null;
-  } catch { return null; }
+    if (Array.isArray(parsed.ranked)) return parsed.ranked;
+    MISS.local = 'the local embed server answered without a result (' + String(parsed.error || 'no ranked list').slice(0, 60) + ')';
+    return null;
+  } catch { MISS.local = 'the local embed server did not answer its recall within ' + budget + ' s'; return null; }
 }
 
 function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1) {
-  if (remoteRecentlyFailed()) return null;
+  if (remoteRecentlyFailed()) { MISS.remote = skippedWhy(); return null; }
   const cfg = remoteEmbedConfig(brain);
-  if (!cfg) return null;
+  if (!cfg) { MISS.remote = 'this machine has no brain server address or token'; return null; }
+  const t0 = Date.now();
   try {
     const payload = JSON.stringify({
       prompt: String(prompt).slice(0, 20000),
@@ -538,14 +633,22 @@ function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1)
     if (parsed.error === 'too many requests') {
       execFileSync(process.execPath, ['-e', 'setTimeout(()=>{},1200)'], { windowsHide: true });
       parsed = JSON.parse(curlRemote(conf, 9000, cfg) || '{}');
-      if (parsed.error === 'too many requests') { RATE_LIMITED = true; return null; }
+      if (parsed.error === 'too many requests') {
+        RATE_LIMITED = true;
+        MISS.remote = 'the brain server refused this turn as rate limited (too many requests from this machine in the last minute), ask again in a minute';
+        return null;
+      }
     }
     if (parsed.v) LAST_SERVER_V = parsed.v;
-    if (!Array.isArray(parsed.ranked)) return null;
+    if (!Array.isArray(parsed.ranked)) {
+      MISS.remote = 'the brain server answered without a result (' + String(parsed.error || 'no ranked list').slice(0, 60) + ')';
+      return null;
+    }
     try { unlinkSync(REMOTE_DOWN); } catch { /* was not marked */ }
     return parsed.ranked;
   } catch (e) {
-    markRemoteDown('recall failed: ' + curlWhy(e));
+    MISS.remote = remoteFailWhy(e, Date.now() - t0, cfg, 9);
+    markRemoteDown('recall failed: ' + MISS.remote.replace(/^the brain server /, ''));
     return null;
   }
 }
@@ -715,6 +818,98 @@ function tailLines(tp, enough) {
     }
   } finally { closeSync(fd); }
 }
+/* WHAT THE AGENT ACTUALLY OPENED, for training recall on real use. The owner, 2026-09-28: gather about 20
+   days of real data, then train the search model on it at most once a month, but only if it helps. The
+   synthetic pairs gave a small gain (reference_trained_recall_model_vs_agent); real pairs are the
+   untested part. So at the start of each turn this sends the PREVIOUS turn's prompt and the memories
+   opened during it to the server, which keeps them in an untracked log. It ends by itself on the date in
+   usage-collection.json, and sends only to the brain server this machine is set up for. */
+const USAGE_SENT = join(homedir(), '.claude', 'havok-usage-sent.json');
+// WHAT RECALL OFFERED, kept per session until the next turn. On a machine with no memories the top bodies arrive
+// inline, so the agent never opens a file and "opened" stays empty: found 2026-10-02, a laptop client and the locked-down client machine sent
+// no rows after updating. The offered list and the start of the answer let the analysis judge which were used.
+const OFFERED_DIR = join(homedir(), '.claude', 'havok-usage-offered');
+function rememberOffered(payload, prompt, hits) {
+  try {
+    const sid = String(payload && payload.session_id || '').replace(/[^\w-]/g, '');
+    if (!sid || !hits || !hits.length) return;
+    mkdirSync(OFFERED_DIR, { recursive: true });
+    writeFileSync(join(OFFERED_DIR, sid + '.json'), JSON.stringify({ prompt: String(prompt).trim().slice(0, 4000), slugs: hits.map((h) => h.slug).slice(0, 40) }));
+  } catch { /* bookkeeping only */ }
+}
+function genuinePrompt(o) {
+  if (!o || o.type !== 'user' || o.isMeta || o.isCompactSummary) return null;
+  const c = o.message && o.message.content;
+  let text = '';
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c)) {
+    if (c.some((p) => p && p.type === 'tool_result')) return null;
+    text = c.filter((p) => p && p.type === 'text').map((p) => p.text).join(' ');
+  }
+  text = text.trim();
+  if (!text || text.startsWith('<') || text.includes('[SYSTEM NOTIFICATION')) return null;
+  return text;
+}
+function openedIn(tool) {
+  const slugs = [], queries = [];
+  const input = (tool && tool.input) || {};
+  const blob = [input.file_path, input.command, input.pattern && input.path].filter((x) => typeof x === 'string').join(' ');
+  for (const m of blob.matchAll(/memory[\\/]+([A-Za-z0-9_-]+)\.md/g)) if (m[1] !== 'MEMORY') slugs.push(m[1]);
+  for (const m of blob.matchAll(/brain-client\.mjs\s+read\s+([A-Za-z0-9_-]+)/g)) slugs.push(m[1]);
+  for (const m of blob.matchAll(/brain-client\.mjs\s+recall\s+([^\n;&|]+)/g)) queries.push(m[1].replace(/["']/g, '').trim());
+  return { slugs, queries };
+}
+function logPreviousTurn(payload, currentPrompt, brain) {
+  try {
+    let window;
+    // No usage-collection.json, no collection.
+    try { window = JSON.parse(readFileSync(join(brain, 'usage-collection.json'), 'utf8')); } catch { return; }
+    const today = new Date().toISOString().slice(0, 10);
+    if (!window.from || !window.until || today < window.from || today > window.until) return;
+    const tp = payload && payload.transcript_path;
+    if (!tp || !existsSync(tp)) return;
+    const rows = [];
+    // A turn full of tool output can run past the first megabyte, so read back until three user
+    // lines that are not tool results are in view: the current prompt, the turn before it, and one spare.
+    const enough = (lines) => lines.filter((l) => l.includes('"type":"user"') && !l.includes('tool_result')).length >= 3;
+    for (const l of tailLines(tp, enough)) { try { rows.push(JSON.parse(l)); } catch { /* partial line */ } }
+    const prompts = [];
+    rows.forEach((o, i) => { const t = genuinePrompt(o); if (t) prompts.push({ i, t, uuid: o.uuid }); });
+    if (prompts.length && prompts[prompts.length - 1].t === currentPrompt.trim()) prompts.pop();
+    const turn = prompts[prompts.length - 1];
+    if (!turn || !turn.uuid) return;
+    let sent = [];
+    try { sent = JSON.parse(readFileSync(USAGE_SENT, 'utf8')); } catch { /* first run */ }
+    if (sent.includes(turn.uuid)) return;
+    const opened = new Set(), queries = new Set();
+    let answer = '';
+    for (let i = turn.i + 1; i < rows.length; i++) {
+      if (genuinePrompt(rows[i])) break;
+      const c = rows[i].message && rows[i].message.content;
+      if (rows[i].type !== 'assistant' || !Array.isArray(c)) continue;
+      const said = c.filter((p) => p && p.type === 'text').map((p) => p.text).join(' ').trim();
+      if (said) answer = said;
+      for (const p of c) if (p && p.type === 'tool_use') {
+        const r = openedIn(p);
+        r.slugs.forEach((s) => opened.add(s)); r.queries.forEach((q) => queries.add(q));
+      }
+    }
+    writeFileSync(USAGE_SENT, JSON.stringify([...sent, turn.uuid].slice(-200)), 'utf8');
+    let offered = [];
+    try {
+      const o = JSON.parse(readFileSync(join(OFFERED_DIR, String(payload.session_id || '').replace(/[^\w-]/g, '') + '.json'), 'utf8'));
+      if (o.prompt === turn.t.slice(0, 4000)) offered = o.slugs || [];
+    } catch { /* nothing offered for that turn */ }
+    if (!opened.size && !queries.size && !offered.length) return;
+    postJson('/usage', {
+      at: Date.now(), host: hostname(),
+      session: createHash('sha256').update(String(payload.session_id || '')).digest('hex').slice(0, 12),
+      prompt: turn.t.slice(0, 4000), opened: [...opened].slice(0, 40), queries: [...queries].slice(0, 10),
+      offered: offered.slice(0, 40), answer: answer.slice(0, 1500),
+    }, brain);
+  } catch { /* data collection must never break a turn */ }
+}
+
 function readRecentContext(payload) {
   try {
     if (payload && typeof payload.context === "string" && payload.context.trim()) {
@@ -778,16 +973,20 @@ try {
   let payload = {};
   try { payload = JSON.parse(raw || '{}'); prompt = String(payload.prompt || ''); } catch { prompt = raw; }
   if (!prompt.trim()) ok('');
+  // A keep-warm ping (hooks/check-keep-warm.mjs) only refreshes the cache; injecting rules and recall into it would
+  // add thousands of tokens to the conversation for nothing.
+  if (prompt.trim() === 'keep-warm ping') ok('');
+  logPreviousTurn(payload, prompt, BRAIN);
   // A background-task or system notification arrives through this hook like a prompt, but it is not a
   // question: on 2026-09-26 one pulled 40 memories of noise. The rules still go in; recall is skipped.
   const systemEvent = prompt.trimStart().startsWith('<task-notification>') || prompt.includes('[SYSTEM NOTIFICATION - NOT USER INPUT]');
 
   // WHAT THE CONVERSATION IS ABOUT, not just what was typed last.
   //
-  // 2026-09-11: a session deep in an Irium delivery report asked "I need to know who did what
+  // 2026-09-11: a session deep in an ERP delivery report asked "I need to know who did what
   // action" and recall returned GitHub Actions, the vault and WhatsApp. The word "action" was the
   // only thing it had, because recall has only ever seen the current prompt.
-  // reference_irium_log_adm_audit, which is literally the memory for who changed what and when,
+  // the audit log memory, which is literally the memory for who changed what and when,
   // never appeared.
   //
   // A short follow-up carries almost no topic. The topic lives in the messages before it, so the
@@ -886,6 +1085,12 @@ try {
   // No local copy: ask the server, which owns them. Silence here would strip every behaviour rule
   // from the turn with nothing on screen to say so.
   if (!rules || !rules.length) rules = fetchRulesRemote(BRAIN);
+  let rulesFromCache = false;
+  if (!rules || !rules.length) { rules = cachedRules(); rulesFromCache = Boolean(rules); }
+  if (rulesFromCache) out.push('(brain rules from this machine\'s last copy: the brain server did not answer this turn.)');
+  // A topic rule (`when`) is kept only when this message matches it; a bad pattern keeps the rule rather than lose it.
+  const matchesTopic = (r) => { if (!r.when) return true; try { return new RegExp(r.when, 'i').test(prompt); } catch { return true; } };
+  if (rules && rules.length) rules = rules.filter(matchesTopic);
   if (rules && rules.length) {
     rules.forEach((r, i) => out.push(`${i + 2}. ${fullRules || !r.short ? r.rule : r.short}`));
   } else {
@@ -1040,12 +1245,15 @@ try {
         if (!serverRanked && !translationFailed && !systemEvent && holdsMemoriesLocally(BRAIN)) serverRanked = fetchRecallLocal(prompt, queries, BRAIN, baseQueries.length - 1, queries.length > baseQueries.length ? baseQueries.length : -1);
 
         let vecs = [];
-        if (serverRanked || translationFailed) {
+        if (serverRanked || translationFailed || systemEvent) {
           // Nothing to do locally. Either the server already answered, or the prompt is Arabic and
-          // the translation failed, so there is nothing worth embedding.
+          // the translation failed, so there is nothing worth embedding. A system event skips recall on purpose:
+          // embedding it anyway printed a false "semantic recall missed" note (audit 2026-11-01).
         } else if (!emb) {
-          denseNote = 'NOTE: semantic recall is OFF (this machine holds no embeddings index and the '
-            + 'brain server is unreachable). Keyword only, so a paraphrase may not match.';
+          denseNote = semanticMissNote(BRAIN) + ' This machine holds no embeddings index of its own to fall back on.';
+        } else if (msLeft() < 4000) {
+          // Not enough of the hook's limit left for another network try: past the limit Claude Code drops the
+          // whole injection, rules included, which is worse than keyword recall said plainly.
         } else if (queries.length > 1 && !existsSync(ALIVE)) {
           // No local daemon, so every chunk would be its own network round trip. One request.
           const batch = fetchVectorsRemote(queries, BRAIN);
@@ -1081,10 +1289,8 @@ try {
         // memories tagged [both], which only the server produces. Caught 2026-08-22 by reading the
         // hook's own output in a live turn. A false degradation warning is worse than none: it tells
         // the agent not to trust recall that is in fact working perfectly.
-        } else if (!vec && !hasArabic && !serverRanked) {
-          denseNote = RATE_LIMITED
-            ? "NOTE: the brain server refused this turn as rate limited (too many requests from this machine in the last minute), so recall below is keyword-only and may be empty. Say so, and ask again in a minute."
-            : "NOTE: semantic recall is OFF (embed server not running). Keyword only, so a paraphrase may not match. Start it: node tools/embed-server.mjs";
+        } else if (!vec && !hasArabic && !serverRanked && !systemEvent) {
+          denseNote = semanticMissNote(BRAIN);
         }
 
         // The embed call already told us the server's index version, for free. If it has moved on,
@@ -1097,7 +1303,7 @@ try {
             + 'The memories below came from the older copy; ask again if something looks missing.';
         }
       }
-    } catch { denseNote = "NOTE: semantic recall is OFF (embeddings index unreadable). Keyword only."; }
+    } catch (e) { denseNote = "NOTE: semantic recall missed this turn because of an error inside the recall hook (" + String((e && e.message) || e).slice(0, 120) + "). Keyword only."; }
     // Recall reads the FULL prompt, not the 2000-char head used for the tier decision.
         //
         // Reusing  here silently destroyed recall for any prompt where the question came
@@ -1106,7 +1312,7 @@ try {
         // the owner pastes logs, emails and bank messages constantly, so this was not a rare shape.
         // Capped well above any real prompt purely so a pathological paste cannot dominate.
         // The context words join the keyword channel. "who did what action" alone tokenizes to
-        // action, which is why a GitHub Actions memory won. With the surrounding Irium report in
+        // action, which is why a GitHub Actions memory won. With the surrounding ERP report in
         // scope, the ERP terms compete on their own merit.
         const sparseSource = recentContext ? (recentContext + " " + prompt) : prompt;
         const words = new Set(qterms(sparseSource.slice(0, 20000).toLowerCase()));
@@ -1179,6 +1385,7 @@ try {
     } catch { /* bookkeeping only, never break a turn for it */ }
     // And to the server, so the machine that draws the map sees every machine.
     postPulse(hits, BRAIN);
+    rememberOffered(payload, prompt, hits);
 
     // RESULTS ALERTS, from tools/analytics.mjs on its five minute timer.
     //
@@ -1278,6 +1485,75 @@ try {
     }
   }
 
+  /* THE AGENT SEARCHES, NOT THE RAW MESSAGE (The owner, 2026-10-15: "the messages that I write are really bad, and the AI
+     will write really good messages. So I think we should activate it and run some tests on the costs with it
+     for like a week"). With hooks/agent-search.json on, the automatic list is replaced by one instruction: the
+     agent writes his message as needs and searches with them, and names anything learned or corrected so it gets
+     saved. hooks/recall-gate.mjs refuses other tools and the end of the turn until that search ran. */
+  try {
+    const as = JSON.parse(readFileSync(join(BRAIN, 'hooks', 'agent-search.json'), 'utf8'));
+    if (as.on && !systemEvent) {
+      const at = out.findIndex((l) => typeof l === 'string' && l.startsWith('BRAIN RECALL:'));
+      if (at >= 0) out.splice(at > 0 && out[at - 1] === '' ? at - 1 : at);
+      const cli = join(BRAIN, 'tools', 'brain-client.mjs').replace(/\\/g, '/');
+      out.push('', 'BRAIN RECALL BY SEARCH, YOUR FIRST STEP THIS TURN. Before any other tool and before answering, work out from this message and the conversation what knowledge you need, one need per separate piece of knowledge, including the standing rules or preferences that apply to the task, and run ONE command with one quoted question per need: as many as the message really has separate pieces (a short message often 2 to 4; a long message, a pasted text or a file with many instructions, one per topic, up to 20), each written as the direct question you need the brain to answer, as long as it needs to be precise (usually 10 to 30 words), plain English, names of people, companies, systems and topics spelled out, typing mistakes corrected, "it" and "that" resolved. Add --learned "<one sentence>" for each thing learned or corrected since the last message (a decision, a fact that turned out different, a correction the user gave you); none if nothing was learned:',
+        'node "' + cli + '" search "<question 1>" "<question 2>" ... --learned "<what was learned>"',
+        'Every other tool and the end of the turn are refused until it has run, and while a learned item is not settled: save it, replace the memory it contradicts, or confirm it is already saved.');
+    }
+  } catch { /* no flag file: the automatic list stays */ }
+
+  /* SMART COMPACTION, THE AGENT'S CUE (The owner, 2026-10-16). From 300,000 tokens the agent judges whether to compact
+     and, at a natural break, asks him; it never compacts without his yes. Context size is read from the last
+     model reply's usage in the transcript, so no machine needs a status line change. The lock is
+     hooks/compact-lock.mjs, the approval tools/compact-approve.mjs, the content the agent's own brief. */
+  try {
+    let ctxTokens = 0;
+    const tp = payload && payload.transcript_path;
+    if (tp && existsSync(tp) && !systemEvent) {
+      for (const l of tailLines(tp, (ls) => ls.some((x) => x.includes('"type":"assistant"') && x.includes('"usage"'))).reverse()) {
+        let o; try { o = JSON.parse(l); } catch { continue; }
+        const u = o && o.type === 'assistant' && o.message && o.message.usage;
+        if (u) { ctxTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0); break; }
+      }
+    }
+    // COMPACTION ANALYTICS: the 10 messages after a compaction (armed by hooks/post-compact.mjs) record the size and
+    // whether the owner had to repeat or correct something; then every unsent row goes to the brain server.
+    const H = join(homedir(), '.claude');
+    const sidSafe = String((payload && payload.session_id) || '').replace(/[^\w-]/g, '');
+    const watchFile = join(H, 'havok-compact-watch', sidSafe + '.json');
+    const logFile = join(H, 'havok-compact-log.jsonl');
+    if (sidSafe && existsSync(watchFile) && !systemEvent) {
+      const w = JSON.parse(readFileSync(watchFile, 'utf8'));
+      const repeat = /you forgot|i told you|i already (said|told)|we already|as i said|again\?|remember (that|what)|tu as oubli|je t.ai (dit|deja)/i.test(prompt);
+      w.turn += 1; w.turnsLeft -= 1;
+      appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), host: hostname(), session: sidSafe, ev: 'after', turn: w.turn, ctx: ctxTokens, repeat }) + '\n');
+      if (w.turnsLeft > 0) writeFileSync(watchFile, JSON.stringify(w)); else unlinkSync(watchFile);
+    }
+    if (existsSync(logFile)) {
+      const sentFile = join(H, 'havok-compact-log.sent');
+      const lines = readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
+      let sent = 0; try { sent = Number(readFileSync(sentFile, 'utf8')) || 0; } catch { /* none sent yet */ }
+      if (lines.length > sent) {
+        postJson('/compaction-log', { host: hostname(), rows: lines.slice(sent, sent + 50).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) }, BRAIN);
+        writeFileSync(sentFile, String(Math.min(lines.length, sent + 50)));
+      }
+    }
+    if (SMART_COMPACTION && ctxTokens >= COMPACT_FROM) {
+      const cli = join(BRAIN, 'tools', 'compact-approve.mjs').replace(/\\/g, '/');
+      out.push('', 'CONTEXT IS AT ' + Math.round(ctxTokens / 1000) + ',000 TOKENS (compaction is considered from ' + COMPACT_FROM / 1000 + ',000). You judge whether this conversation should be compacted: not while a long piece of work is under way, yes at a natural break. If you think it should, ask the owner in one line, in the word "compacting", and wait; never compact without his yes, and no reply means he is away. On his yes: settle anything learned into the brain, run node "' + cli + '", then write your compaction brief with the Write tool to ~/.claude/havok-compact-brief/<session id>.md, never as a chat message (the owner: keep it out of the chat to save tokens) (what you are working on and its exact state; what you still need exactly: his instructions and decisions in his words with their dates and what each answered, numbers with what they measured, paths, ids, amounts, open questions, ways of working he set; what can go: finished work already saved and where, old tool output, dead ends), then end with a two-line reply; the compaction starts on the next request.');
+    }
+  } catch { /* the cue is a help, never a reason to lose the turn */ }
+  /* INFINITE CONTEXT UPDATES (the owner, 2026-11-02: "for the people that use our repo, they receive updates
+     automatically"). Only in an install of the public repository (its package.json names infinite-context), so the
+     owner's own brain never runs it. tools/update.mjs returns the last result worth telling, once, and starts a check
+     in the background when the last one is a day old; this turn never waits for it. */
+  try {
+    if (!systemEvent && JSON.parse(readFileSync(join(BRAIN, 'package.json'), 'utf8')).name === 'infinite-context') {
+      const { updateNotice } = await import('../tools/update.mjs');
+      const note = updateNotice(BRAIN);
+      if (note) out.push('', note);
+    }
+  } catch { /* an update notice is never a reason to lose the turn */ }
   ok(out.join('\n'));
 } catch (e) {
   // Failing silent here was wrong, and it is the worst failure this file can have.

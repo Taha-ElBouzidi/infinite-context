@@ -1,0 +1,64 @@
+{
+  "_comment": "Content hashes of kit methods as shipped before their current version. tools/kit.mjs refresh replaces a copy whose hash is listed here (the user never changed it) and offers the new version beside any other copy. _before_versions names the methods every install made before kit versions existed was given. Written by node tools/kit.mjs stamp; the first entries come from the published tags v0.4.0 to v0.4.10.",
+  "_before_versions": [
+    "reference_how_to_brief_sub_agents_and_pick_models.md",
+    "reference_how_to_debug_systematically.md",
+    "reference_how_to_handle_meetings_and_follow_ups.md",
+    "reference_how_to_make_a_presentation_deck.md",
+    "reference_how_to_make_a_printable_document.md",
+    "reference_how_to_plan_test_and_verify.md",
+    "reference_how_to_research_with_sources.md",
+    "reference_how_to_review_work_before_calling_it_done.md",
+    "reference_how_to_save_a_memory.md",
+    "reference_how_to_set_and_follow_a_goal.md",
+    "reference_how_to_set_up_the_assistant.md",
+    "reference_how_to_start_a_new_project.md",
+    "reference_how_to_turn_a_repeated_task_into_a_method.md",
+    "reference_how_to_write_a_document.md"
+  ],
+  "reference_how_to_brief_sub_agents_and_pick_models.md": [
+    "78b4c4c911e08af6"
+  ],
+  "reference_how_to_debug_systematically.md": [
+    "f6da1c32c2ba0604"
+  ],
+  "reference_how_to_handle_meetings_and_follow_ups.md": [
+    "32cd6a8bdb940743"
+  ],
+  "reference_how_to_make_a_presentation_deck.md": [
+    "a9915c87495e2b0b"
+  ],
+  "reference_how_to_make_a_printable_document.md": [
+    "a9815b9a9b9e2af9"
+  ],
+  "reference_how_to_plan_test_and_verify.md": [
+    "09bf52be4a462ff3"
+  ],
+  "reference_how_to_research_with_sources.md": [
+    "b72d7bc5f96e1f10"
+  ],
+  "reference_how_to_review_work_before_calling_it_done.md": [
+    "553338c6943d2531"
+  ],
+  "reference_how_to_save_a_memory.md": [
+    "988a996baf394aa8"
+  ],
+  "reference_how_to_set_and_follow_a_goal.md": [
+    "c0b28400096a4245"
+  ],
+  "reference_how_to_set_up_the_assistant.md": [
+    "7f22345a3b13e6b5"
+  ],
+  "reference_how_to_start_a_new_project.md": [
+    "ca7c94bd489edfde"
+  ],
+  "reference_how_to_turn_a_repeated_task_into_a_method.md": [
+    "d9a0ad470ae347e5"
+  ],
+  "reference_how_to_write_a_document.md": [
+    "e635a90a8df71460"
+  ],
+  "reference_how_to_use_the_git_server.md": [
+    "36a682a768554bbc"
+  ]
+}

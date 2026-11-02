@@ -114,7 +114,10 @@ for (const f of files) {
     ruleOrder: Number(fm.rule_order || 999),
     // A hand-written short form, for the compact rules block (2026-09-26): cutting a rule mechanically
     // dropped the half of rule 2 that says ask before anything irreversible, and a model then sent an email.
-    ruleShort: (fm.rule_short || '').replace(/^["']|["']$/g, '').trim() || null,
+    ruleShort: (fm.rule_short || '').replace(/^["']|["']$/g, '').split('\\"').join('"').split("\'").join("'").trim() || null,
+    // Topic rules (2026-10-23): with a `rule_when:` regular expression the rule is injected only on a message that
+    // matches it, so a rule about one kind of work (writing emails) reaches every agent then and costs nothing otherwise.
+    ruleWhen: (fm.rule_when || '').replace(/^["']|["']$/g, '').trim() || null,
     /* THE QUESTIONS THIS MEMORY ANSWERS, in the words he would actually type. Measured 2026-09-21:
        the memory behind "I need to know who did what action" scores 0.144 against the description we
        index, and 0.523 against the question it answers. For "stop writing so much", 0.216 against
@@ -409,7 +412,7 @@ emit(join(BRAIN, 'index', 'questions.json'), JSON.stringify(askRows, null, 0));
 // and every turn on every machine changes with it.
 const ruleRows = entries.filter((e) => e.rule)
   .sort((a, b) => a.ruleOrder - b.ruleOrder || a.file.localeCompare(b.file))
-  .map((e) => ({ slug: e.file.replace(/\.md$/, ''), order: e.ruleOrder, rule: e.rule, ...(e.ruleShort ? { short: e.ruleShort } : {}) }));
+  .map((e) => ({ slug: e.file.replace(/\.md$/, ''), order: e.ruleOrder, rule: e.rule, ...(e.ruleShort ? { short: e.ruleShort } : {}), ...(e.ruleWhen ? { when: e.ruleWhen } : {}) }));
 emit(join(BRAIN, 'index', 'rules.json'), JSON.stringify({ rules: ruleRows }, null, 2));
 
 const keywordsText = JSON.stringify({ terms: keywords, descriptions: descs }, null, 0);

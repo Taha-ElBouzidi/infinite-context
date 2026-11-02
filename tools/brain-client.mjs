@@ -20,7 +20,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdir
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname, tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { whoAmI } from './provenance.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NL = String.fromCharCode(10);
@@ -146,7 +147,8 @@ function call(path, { method = 'GET', body = null, timeoutSec = 20 } = {}) {
   try {
     const out = execFileSync('curl', ['-K', '-'], {
       input: lines.join('\n') + '\n',
-      encoding: 'utf8', timeout: (timeoutSec + 2) * 1000, stdio: ['pipe', 'pipe', 'ignore'],
+      // windowsHide: run from a hidden hook or task, curl otherwise opens its own empty console window (the owner saw one, 2026-10-24).
+      encoding: 'utf8', timeout: (timeoutSec + 2) * 1000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
     });
     return JSON.parse(out || '{}');
   } catch { return null; } finally {
@@ -155,6 +157,10 @@ function call(path, { method = 'GET', body = null, timeoutSec = 20 } = {}) {
 }
 
 const [cmd, arg] = process.argv.slice(2);
+const REPO_TOOL = join(BRAIN, 'tools', 'repo.mjs');
+function gitServerUrl() {
+  try { return String(JSON.parse(readFileSync(join(BRAIN, 'brain.json'), 'utf8')).gitServer.url || '').replace(/\/+$/, ''); } catch { return ''; }
+}
 
 if (cmd === 'status') {
   const AGEKEY = resolve(homedir(), '.claude', 'havok-age-key.txt');
@@ -214,7 +220,7 @@ if (cmd === 'status') {
     } catch { /* a key that cannot run vault.mjs decrypts nothing, which is the answer */ }
     process.stdout.write('age identity: PRESENT at ' + AGEKEY + ', and it '
       + (decrypts ? 'DOES decrypt the local vault' : 'decrypts nothing (dead leftover)')
-      + '. Private keys are meant to live only on SERVER: report this rather than ignoring it.\n');
+      + '. Private keys are meant to live only on the brain host: report this rather than ignoring it.\n');
   } else {
     process.stdout.write('age identity: none on this machine, which is correct. Secrets come from the server.\n');
   }
@@ -370,6 +376,21 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
     }
   }
 
+} else if (cmd === 'store-secret') {
+  // An agent that just obtained a key stores it in the vault on the host. Value on stdin only: argv
+  // shows up in process listings and error output. The owner, 2026-10-07: "the agent gets the key it needs,
+  // sends it to you and you save it".
+  //   <command that prints the key> | node tools/brain-client.mjs store-secret <name> --note "..." [--replace]
+  const flag = (n) => { const i = process.argv.indexOf(n); return i > -1 ? process.argv[i + 1] : null; };
+  if (!arg) { process.stderr.write('usage: <key on stdin> | brain-client.mjs store-secret <name> --note "what it is" [--replace]' + NL); process.exit(1); }
+  let value = '';
+  try { value = readFileSync(0, 'utf8').trim(); } catch { value = ''; }
+  if (!value) { process.stderr.write('No value on stdin. Pipe the key in, never put it on the command line.' + NL); process.exit(1); }
+  const r = call('/vault/set/' + encodeURIComponent(arg), { method: 'POST', body: { value, note: flag('--note') || '', replace: process.argv.includes('--replace') }, timeoutSec: 120 });
+  if (!r) { process.stderr.write('The server did not answer, so NOTHING was stored. Check with: node tools/brain-client.mjs status' + NL); process.exit(1); }
+  if (!r.ok) { process.stderr.write('REFUSED: ' + (r.error || 'unknown') + (r.detail ? ': ' + r.detail : '') + NL); process.exit(1); }
+  process.stdout.write((r.replaced ? 'replaced ' : 'stored ') + r.name + ' in the vault on the brain host' + (r.pushed ? '' : ' (git backup failed, the key IS stored)') + NL);
+
 } else if (cmd === 'write') {
   // THE BODY NEVER COMES FROM ARGV. It arrives as a file path or on stdin, and both reasons are
   // scars: a memory body on a command line gets mangled by shell quoting, and this project has
@@ -400,7 +421,7 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
   }
   if (!content.trim()) { process.stderr.write('the body is empty, refusing to write' + NL); process.exit(1); }
 
-  const r = call('/memory', { method: 'POST', body: { slug: arg, content }, timeoutSec: 300 });
+  const r = call('/memory', { method: 'POST', body: { slug: arg, content, by: whoAmI() }, timeoutSec: 300 });
   if (!r) {
     // NO LOCAL FALLBACK, deliberately, unlike list and secret above. The owner, 2026-08-24: the brain is
     // 100% on the server and git is only its backup. Writing to the local clone and pushing is the
@@ -446,7 +467,7 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
     process.exit(1);
   }
   const r = call('/memory/' + encodeURIComponent(arg), {
-    method: 'DELETE', body: { why, force: process.argv.includes('--force') }, timeoutSec: 120,
+    method: 'DELETE', body: { why, force: process.argv.includes('--force'), by: whoAmI() }, timeoutSec: 120,
   });
   if (!r) {
     process.stderr.write('The server did not answer, so NOTHING was deleted. Never delete from your'
@@ -464,6 +485,50 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
     process.stdout.write('WARNING: ' + r.linked.length + ' memories still link to it and were left as they are: '
       + r.linked.join(', ') + NL + 'Fix them or the next write from any machine is refused.' + NL);
   }
+
+} else if (cmd === 'recall') {
+  // THE AGENT'S OWN SEARCH, by what it is about to do (2026-09-28). The hook recalls from the owner's
+  // raw words, and "shoot the courier a note" never says "email", so the email method was missed. The agent
+  // that read the message already knows the task, so it asks in its own words: recall "write an email
+  // to a supplier". the owner: "the agent that was asked first understands the prompt from the context and
+  // then sends for a recall". Prints slug and description; open the ones that matter with read.
+  const q = process.argv.slice(3).join(' ').trim();
+  if (!q) { process.stderr.write('usage: brain-client.mjs recall "<what you are about to do>"' + NL); process.exit(1); }
+  const r = call('/recall', { method: 'POST', body: { prompt: q, queries: [q] } });
+  const hits = (r && (r.ranked || r.hits || r.results)) || null;
+  if (!hits) { process.stderr.write('recall failed: the brain server did not answer' + NL); process.exit(1); }
+  for (const h of hits.slice(0, 15)) process.stdout.write((h.slug || h) + '  ' + String(h.description || '').slice(0, 140) + NL);
+
+} else if (cmd === 'search') {
+  // THE DESCRIBED SEARCH, every message (The owner, 2026-10-15). Arguments are the needs the agent wrote from his
+  // message; each --learned "<item>" is something learned or corrected since the last message, checked against
+  // the brain so it gets saved or the old memory replaced. --saved means the learned items of this turn are
+  // already in the brain as they should be (hooks/recall-gate.mjs reads that).
+  const args = process.argv.slice(3);
+  if (args.includes('--saved')) { process.stdout.write('Noted: the learned items of this turn are already in the brain.' + NL); process.exit(0); }
+  const needs = [], learned = [];
+  for (let i = 0; i < args.length; i++) { if (args[i] === '--learned') { if (args[i + 1]) learned.push(args[++i]); } else needs.push(args[i]); }
+  if (!needs.length && !learned.length) { process.stderr.write('usage: brain-client.mjs search "<need>" ["<need>" ...] [--learned "<what was learned or corrected>" ...]' + NL); process.exit(1); }
+  const r = call('/search', { method: 'POST', body: { needs, learned } });
+  if (!r || !Array.isArray(r.memories)) { process.stderr.write('search failed: the brain server did not answer' + NL); process.exit(2); }
+  process.stdout.write('BRAIN RECALL: ' + r.memories.length + ' memories. Open the ones you need with node "' + join(BRAIN, 'tools', 'brain-client.mjs').replace(/\\/g, '/') + '" read <slug> (or the file in memory/ on the brain host) before answering.' + NL);
+  for (const m of r.memories) process.stdout.write('- ' + m.slug + (m.how === 'both' ? ' [keyword and meaning]' : ' [' + m.score + ']') + ': ' + m.description.slice(0, 100) + NL);
+  if (r.learned && r.learned.length) {
+    process.stdout.write(NL + 'LEARNED, check each against the brain now:' + NL);
+    for (const l of r.learned) {
+      process.stdout.write('* ' + l.item + NL);
+      if (!l.closest.length) process.stdout.write('  nothing close in the brain: write it as a new memory.' + NL);
+      for (const c of l.closest) process.stdout.write('  closest: ' + c.slug + ' [' + c.score + ']: ' + c.description.slice(0, 140) + NL);
+    }
+    process.stdout.write('For each: already said correctly in a memory, nothing to do; missing, write a new memory; an old memory says the opposite, replace it, which keeps an archive of the old one (on the brain host: node tools/replace-memory.mjs old new --why "..."; on another machine: brain-client.mjs write the new one, then brain-client.mjs delete the old one, which the server archives). If all are already saved correctly, run: node "' + join(BRAIN, 'tools', 'brain-client.mjs').replace(/\\/g, '/') + '" search --saved' + NL);
+  }
+
+} else if (cmd === 'repo' && existsSync(REPO_TOOL)) {
+  // ANY REPO FROM A GIT SERVER OF THE OWNER'S OWN, WITHOUT GITHUB (The owner, 2026-11-01). The work lives in repo.mjs, kept
+  // apart so the engine export can leave it out; without that file there is no repo command and the help does not list
+  // one (tools/brain-client-help.test.mjs). Same arguments: list, url, clone, pull, push.
+  const r = spawnSync(process.execPath, [REPO_TOOL, ...process.argv.slice(3)], { stdio: 'inherit', windowsHide: true });
+  process.exit(r.status == null ? 1 : r.status);
 
 } else if (cmd === 'read') {
   // FETCH ONE MEMORY FROM THE the host, for a machine that holds no copy of memory/.
@@ -501,6 +566,7 @@ const fs_hasMemories = (d) => { try { return readdirSync(d).some((n) => n.endsWi
     '  secret <name>               print one secret value',
     '  read <slug>                 print one memory, from the server, no local copy needed',
     '  write <slug> --file <path>  write a memory through the server (also --stdin)',
+    ...(existsSync(REPO_TOOL) ? ['  repo list|url|clone|pull|push   any repo from the git server' + (gitServerUrl() ? ' (' + gitServerUrl() + ')' : '') + ', no GitHub'] : []),
     '',
     'Server URL: ' + URL_BASE + '  (override with HAVOK_SERVER_URL)',
     '',

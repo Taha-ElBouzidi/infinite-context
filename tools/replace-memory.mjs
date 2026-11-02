@@ -25,6 +25,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, rmSync
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { whoAmI, record } from './provenance.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MEM = join(BRAIN, 'memory');
@@ -73,6 +74,7 @@ if (!existsSync(join(BRAIN, 'server-endpoint.json'))) {
   writeFileSync(join(BRAIN, 'deleted', oldSlug + '.' + stamp.replace(/[:.]/g, '-') + '.md'),
     '<!-- deleted ' + stamp + ': replaced by ' + newSlug + ': ' + why.slice(0, 300) + ' -->' + NL + readFileSync(old, 'utf8'));
   rmSync(old);
+  record([{ slug: oldSlug, action: 'replace', to: newSlug, why }], whoAmI(), 'replace-memory');
   const b = spawnSync(process.execPath, [join(BRAIN, 'tools', 'build-index.mjs')], { encoding: 'utf8', windowsHide: true });
   process.stdout.write('replaced ' + oldSlug + ' with ' + newSlug + ' (old copy in deleted/), index '
     + (b.status === 0 ? 'rebuilt' : 'FAILED to rebuild: run node tools/build-index.mjs') + NL);
@@ -87,4 +89,5 @@ if (r.status !== 0) {
     + 'fix the cause and rerun, or revert them with git.' + NL);
   process.exit(1);
 }
+record([{ slug: oldSlug, action: 'replace', to: newSlug, why }], whoAmI(), 'replace-memory');
 process.stdout.write('replaced ' + oldSlug + ' with ' + newSlug + '. Now run node tools/save-brain.mjs' + NL);

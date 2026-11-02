@@ -149,6 +149,6 @@ if (hasRules) test('rules', rulesHook, { ...base, hook_event_name: 'SessionStart
 }
 const ctx = test('recall', preTurn, { ...base, hook_event_name: 'UserPromptSubmit', turn_id: '1', prompt: 'what are the rules for writing a memory' });
 const hits = ctx.split(NL).filter((l) => l.startsWith('- ')).length;
-say('recall returned ' + hits + ' memories' + (/^NOTE: semantic recall is OFF|^BRAIN RULES FAILED TO LOAD/m.test(ctx) ? ' (DEGRADED, read the context: it says why)' : ''));
+say('recall returned ' + hits + ' memories' + (/^NOTE: semantic recall (is OFF|missed)|^BRAIN RULES FAILED TO LOAD/m.test(ctx) ? ' (DEGRADED, read the context: it says why)' : ''));
 say(failed ? 'SETUP HAS FAILURES: fix them before using Codex.' : 'All hooks run. Last step, in Codex: type /hooks and trust the hooks, then start a new session. In the Codex app, check that the MCP server "brain" is listed and enabled (Settings, MCP servers); the app may not run hooks, so that tool is its recall.');
 process.exit(failed ? 1 : 0);

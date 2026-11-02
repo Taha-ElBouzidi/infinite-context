@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: d9a0ad470ae347e5
 ---
 
 # How to turn a repeated task into a saved method

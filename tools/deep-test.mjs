@@ -130,7 +130,7 @@ function hook(prompt, env = {}, brainDir = BRAIN) {
   rules >= 8 ? pass('hook injects rules', rules + ' rules') : fail('hook injects rules', rules + ' rules');
   mems === 5 ? pass('hook injects recall', '5 memories') : fail('hook injects recall', mems + ' memories');
   tagged === mems ? pass('channel tags present', 'all ' + tagged + ' tagged') : fail('channel tags', tagged + '/' + mems);
-  !/semantic recall is OFF/.test(c) ? pass('no false degradation notice', 'clean')
+  !/semantic recall (is OFF|missed)/.test(c) ? pass('no false degradation notice', 'clean')
     : fail('no false degradation notice', 'the OFF warning is back');
 }
 {
@@ -168,7 +168,7 @@ function hook(prompt, env = {}, brainDir = BRAIN) {
       .filter((f) => !existsSync(join(TMP, 'havok-brain', f)));
     fail('machine with NO index', rules + ' rules, ' + mems + ' memories'
       + (missing.length ? '; the clone is MISSING ' + missing.join(', ') : '; all needed files copied')
-      + (/unreachable|not reachable|recall is OFF|degraded/i.test(c) ? '; the hook reported degradation' : '')
+      + (/unreachable|not reachable|recall is OFF|recall missed|degraded/i.test(c) ? '; the hook reported degradation' : '')
       + '; context starts: ' + JSON.stringify(c.slice(0, 120)));
   }
   try { rmSync(TMP, { recursive: true, force: true }); } catch { /* left behind in temp, harmless */ }

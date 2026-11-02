@@ -171,8 +171,11 @@ linked to them with `[[file-name]]` that clear a lower bar of their own. A quest
 memories usually finds the second through a link. Everything runs on your machine.
 
 **Methods are memories too.** How to make a deck, research with sources, debug, review work before
-calling it done, run a meeting, set a goal: 14 how-to memories ship, found by recall when the
-conversation needs them, not triggered like scripts. Write your own the same way.
+calling it done, run a meeting, set a goal, write an email or a chat message, make a video or voice
+audio, write a context for your agents, and use the system itself (recall, the vault, a shared git
+server, messages between agents, cleaning up the context): 26 how-to memories ship, found by recall when
+the conversation needs them, not triggered like scripts. Write your own the same way. They are kept up
+to date like the engine, except where you changed one (see Updates).
 
 **Behaviour rules are memories too.** Any memory carrying a `rule:` line is injected on every turn.
 Eight generic ones ship. Add your own by writing a memory. Change one by editing a file.
@@ -194,6 +197,31 @@ node tools/eval-recall.mjs     # accuracy against a fixed query set
 node tools/bench-recall.mjs    # latency of the real hook, end to end
 node tools/analytics.mjs       # results sheet from every logged call, with alerts
 ```
+
+## Updates
+
+A git clone keeps itself up to date. While you use your assistant, the recall hook checks at most once a
+day, in the background, for a release newer than yours: a tag `vX.Y.Z` on `main`, never another branch.
+When there is one it moves to it, runs `tools/verify.mjs`, and goes back on its own if the update brought
+a failure. Your agent tells you in one line what changed.
+
+It never touches your memories: a release that would put a file in `memory/`, or overwrite any file of
+yours, is refused. An engine file you changed that the release also changes stops the update and you are
+told why. The how-to memories are refreshed only where you have not changed them; for one you changed, the
+new version waits in `kit-updates/` (`node tools/kit.mjs accept <name>` takes it and keeps yours as a backup).
+
+```sh
+node tools/update.mjs --status     # the setting, the last check and what it found
+node tools/update.mjs              # update now
+node tools/update.mjs --notify     # check daily, only tell you, install by hand
+node tools/update.mjs --off        # no automatic checks (or INFINITE_CONTEXT_AUTO_UPDATE=0)
+```
+
+The daily check is one `git ls-remote`, git's own protocol rather than GitHub's API, so it never counts
+against the API's limits. An install that is not a git clone, or that has commits of its own, is not
+updated automatically: it says so once, with the command to update by hand. An install older than the
+version that brought this updates by hand once: `git pull`, then `node tools/kit.mjs refresh` and
+`node tools/verify.mjs`.
 
 ## Read more
 

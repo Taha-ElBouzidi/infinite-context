@@ -123,7 +123,8 @@ const AGENTS = [
     name: 'Antigravity (agy)', found: () => existsSync(join(HOME, '.gemini', 'antigravity-cli')) || existsSync(join(HOME, '.gemini', 'config')),
     run: () => {
       addMcp(join(HOME, '.gemini', 'config', 'mcp_config.json'));
-      if (agyManaged()) return 'MCP (agy-run.mjs manages this machine, no hook)';
+      // The recall hook now goes on every machine, managed or not (The owner, 2026-10-22: Gemini helpers get the same
+      // automatic recall; tested on the host).
       const hp = join(HOME, '.gemini', 'config', 'hooks.json'); const h = readJson(hp);
       h.brain = { PreInvocation: [{ type: 'command', command: hookCmd('agy'), timeout: 30 }] };
       writeJson(hp, h);

@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: a9815b9a9b9e2af9
 ---
 
 # How to make a printable document that exports cleanly to PDF

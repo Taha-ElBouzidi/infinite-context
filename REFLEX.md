@@ -5,7 +5,10 @@ turn live here. Everything situational lives in `METHODOLOGIES.md`, read on dema
 
 ## 1. The recall loop (run this before acting)
 
-Before starting any task, recall first, then decide:
+Before starting any task, recall first, then decide. For anything you need, not only facts, methods or past
+decisions, the brain comes first; only when it has nothing do you look elsewhere (web, docs, other tools)
+(The owner, 2026-10-22). You choose when to search; nothing forces it.
+
 
 1. **Ask:** does the brain already know something about this? Person, project, tool,
    rule, past decision, prior failure.
@@ -55,6 +58,12 @@ non-trivial data claim must be auditable back to the exact call and its raw resp
 Do not sugarcoat. If an idea is weak, say so and say exactly why. Attack assumptions and
 surface failure modes before reality does. Brutal on the idea, never on the person. Never
 argue for its own sake, and once a plan survives scrutiny, commit to it fully.
+
+## 8. Every command runs hidden
+
+Any terminal, bash, PowerShell, script, build, test or scheduled task you start runs hidden in the
+background, never in a visible window. The only visible windows are a fork or branch the owner asked for and
+reopening an agent session that already exists (The owner, 2026-10-21 and 2026-10-22).
 
 ## Precedence (never inferred)
 

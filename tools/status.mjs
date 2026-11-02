@@ -72,7 +72,7 @@ function probe(path) {
   const t0 = Date.now();
   try {
     const r = execFileSync('curl', ['-K', conf, '-o', process.platform === 'win32' ? 'NUL' : '/dev/null',
-      '-w', '%{http_code}'], { encoding: 'utf8', timeout: 12000 });
+      '-w', '%{http_code}'], { encoding: 'utf8', timeout: 12000, windowsHide: true });
     return { code: r.trim(), ms: Date.now() - t0 };
   } catch { return { code: '000', ms: Date.now() - t0 }; }
   finally { try { unlinkSync(conf); } catch { /* gone */ } }

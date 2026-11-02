@@ -6,6 +6,8 @@ metadata:
   type: reference
   asserted: 2026-09-26
   updated: 2026-09-26
+  kit_version: 1
+  kit_hash: 7f22345a3b13e6b5
 ---
 
 # How to set up the assistant for its person

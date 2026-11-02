@@ -48,6 +48,14 @@ metadata:
 
 After writing, run `node tools/build-index.mjs`.
 
+## One memory, not two
+
+Claude Code's built-in memory (`~/.claude/projects/<project>/memory/`) cannot be turned off, but
+facts are written in one place only: here. Two stores that are both written drift apart silently
+and one becomes confidently wrong. Keep the built-in `MEMORY.md` as a short pointer to this
+directory and write nothing else there. Never save a fact to both. The steps are in `AGENTS.md`,
+step 5.
+
 ## The gate
 
 `node tools/verify.mjs` before any commit. It parses every tool and hook, checks the index matches

@@ -51,6 +51,18 @@ const GENERIC_CASES = [
   ['set up a folder to track my job applications', ['reference_how_to_start_a_new_project']],
   ['change your name and answer me in french from now on', ['reference_how_to_set_up_the_assistant']],
   ['I keep asking you to do the weekly report the same way, keep that', ['reference_how_to_turn_a_repeated_task_into_a_method']],
+  ['reply to the landlord email about the deposit', ['reference_how_to_write_an_email']],
+  ['send a cold email to a supplier we have never worked with', ['reference_how_to_write_a_first_message_to_someone_new']],
+  ['text my brother on whatsapp that I will be late tonight', ['reference_how_to_write_chat_messages']],
+  ['make a short explainer video for the new feature', ['reference_how_to_make_a_video_presentation']],
+  ['read me this summary as audio while I drive', ['reference_how_to_make_voice_audio']],
+  ['write the system prompt that all my agents will share', ['reference_how_to_write_a_context']],
+  ['add this rule to the global context so every machine sees it', ['reference_how_to_use_shared_contexts']],
+  ['this conversation is huge, archive the old parts', ['reference_how_to_clean_up_the_context']],
+  ['recall is not working, what do you remember about this', ['reference_how_to_use_the_brain']],
+  ['store this api key somewhere safe', ['reference_how_to_use_the_vault']],
+  ['clone the repo from our own git server and push the fix', ['reference_how_to_use_the_git_server']],
+  ['ask the agent on the other machine to check its logs', ['reference_how_to_message_another_agent']],
 ];
 // --multihop scores the questions whose answer needs SEVERAL memories (eval-multihop.json, real
 // questions from the owner's transcripts, 2026-09-25). A case counts only when EVERY expected memory
