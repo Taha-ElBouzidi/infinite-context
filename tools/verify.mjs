@@ -18,6 +18,7 @@ import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { execFileSync, execSync , spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
+import { versionGuard } from './version-guard.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const QUIET = process.argv.includes('--quiet');
@@ -124,7 +125,9 @@ try {
 // every machine that installs the brain as a plugin it never ran. No error, no warning, and
 // verify passed all 21 checks because it only ever asked "does this file parse", never "is
 // it wired up". An unregistered hook is indistinguishable from a deleted one at runtime.
-const REQUIRED_EVENTS = ['SessionStart', 'PreToolUse', 'Stop'];
+// Since 0.4.88 (HAVOK, 2026-11-03) only SessionStart: the other events' backups are written into settings.json by
+// tools/backup-arm.mjs while a session is armed (the mod does the work otherwise), and SessionStart is what arms them.
+const REQUIRED_EVENTS = ['SessionStart'];
 try {
   const hj = JSON.parse(readFileSync(join(BRAIN, 'hooks', 'hooks.json'), 'utf8'));
   const events = hj.hooks || {};
@@ -355,15 +358,13 @@ try {
   const gitq = (args) => execFileSync('git', ['-C', BRAIN, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   const staged = gitq(['diff', '--cached', '--name-only']).split(String.fromCharCode(10)).map((s) => s.trim()).filter(Boolean);
   const hookChange = staged.filter((f) => f.startsWith('hooks/') && (f.endsWith('.mjs') || f.endsWith('.json')));
-  if (hookChange.length) {
-    const now = JSON.parse(readFileSync(join(BRAIN, '.claude-plugin', 'plugin.json'), 'utf8')).version;
-    let head = '';
-    try { head = JSON.parse(gitq(['show', 'HEAD:.claude-plugin/plugin.json'])).version; } catch { head = ''; }
-    if (head === now) bad('hook code is staged (' + hookChange.join(', ') + ') but .claude-plugin/plugin.json is still ' + now + '. Bump the version, or no machine will ever load this change: claude plugin update compares versions, not content.');
-    else ok('hook change comes with a plugin version bump, ' + head + ' to ' + now);
-  } else {
-    ok('no hook code staged, plugin version may stay');
-  }
+  const versionAt = (rev) => { try { return JSON.parse(gitq(['show', rev + ':.claude-plugin/plugin.json'])).version; } catch { return ''; } };
+  const now = JSON.parse(readFileSync(join(BRAIN, '.claude-plugin', 'plugin.json'), 'utf8')).version;
+  let branch = '', baseRev = '';
+  try { branch = gitq(['rev-parse', '--abbrev-ref', 'HEAD']); } catch { branch = ''; }
+  try { baseRev = gitq(['merge-base', 'HEAD', 'origin/master']); } catch { baseRev = ''; }
+  const r = versionGuard({ hookChange, branch, now, head: versionAt('HEAD'), base: baseRev ? versionAt(baseRev) : '', master: versionAt('origin/master') });
+  if (r.ok) ok(r.message); else bad(r.message);
 } catch { ok('plugin version guard skipped: not a git checkout'); }
 if (!QUIET || failures.length) {
   console.log(`\n${failures.length ? 'BRAIN VERIFY FAILED' : 'BRAIN VERIFY PASSED'}: ${passes.length} passed, ${failures.length} failed`);

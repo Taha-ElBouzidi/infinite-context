@@ -5,13 +5,12 @@
 //   the mod handled this very event (same key, within a minute)  exit at once, doing nothing;
 //   otherwise (mod missing, crashed, skipped by a guard, broken by a Claude Code update)  run the old hooks of this
 //   event exactly as hooks.json ran them before (same files, matchers and time limits, in parallel), hand on what
-//   they answered, log the activation to ~/.claude/havok-mod/backup.log, and record it as a row for the analytics
-//   store on the brain host (send-analytics.mjs, started detached: the hook never waits for the network).
+//   they answered, and log the activation to ~/.claude/havok-mod/backup.log.
 // One change from before: a safety check that does not finish in its time refuses the action (The owner, 2026-11-02:
 // hooks "go past the time we allow them and no issue"; a timed-out hook let the action through). Its time limit here
 // is the old one, and the hooks.json limit of this file is above the largest, so this file always gets to decide.
 // The handled path loads nothing but the marker rules, so it costs one node start and one small file read.
-import { readFileSync, appendFileSync, mkdirSync, statSync, renameSync, existsSync } from 'node:fs';
+import { readFileSync, appendFileSync, mkdirSync, statSync, renameSync, existsSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, resolve } from 'node:path';
 import { homedir, hostname } from 'node:os';
@@ -32,6 +31,10 @@ export const JOBS = {
     { file: 'brain-gate.mjs', args: ['prompt'], ms: 30000 },
     { file: 'recall-gate.mjs', args: ['prompt'], ms: 5000 },
     { file: 'style-note.mjs', ms: 5000 },
+    // The per-turn rules and recall, as a backup like the rest (HAVOK, 2026-11-03): it runs only when the mod did not
+    // handle this prompt. Until 0.4.86 it was its own hooks.json entry, which ran beside the mod's recall on every
+    // prompt (the locked-down client machine: 3.1 s and 34,818 characters each time). It keeps its own 5 s deadline inside this limit.
+    { file: 'pre-turn.mjs', args: ['--from-plugin'], ms: 10000 },
   ],
   PreToolUse: [
     { file: 'check-limit.mjs', ms: 5000, safety: 'the limit reserve check' },
@@ -50,14 +53,9 @@ export const JOBS = {
     { file: 'brain-gate.mjs', args: ['stop'], ms: 10000 },
     { file: 'recall-gate.mjs', args: ['stop'], ms: 5000 },
   ],
-  PostCompact: [{ file: 'post-compact.mjs', ms: 5000 }],
 };
 
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
-// The backup's activations, as rows for the analytics store on the host (hooks/send-analytics.mjs, kind hook-backup;
-// The owner, 2026-11-02: tracked as data to find out why the mod failed, nobody is messaged). The row waits in this outbox
-// only until the server confirms it.
-export const OUTBOX = 'outbox/hook-backup.jsonl';
 
 // Why the mod did not handle this event, from its marker (alive-rules.mjs): a short cause for counting, and words.
 export function whyNotHandled(marker, event, now) {
@@ -69,19 +67,6 @@ export function whyNotHandled(marker, event, now) {
   return { cause: 'event-not-handled', why: 'the mod is running in this session but handled no ' + event + v };
 }
 
-// One row in the outbox, then a detached hidden sender: this hook never waits for the network. Never throws.
-function recordBackup(home, row) {
-  try {
-    const outbox = join(home, '.claude', 'havok-mod', ...OUTBOX.split('/'));
-    mkdirSync(dirname(outbox), { recursive: true });
-    appendFileSync(outbox, JSON.stringify(row) + '\n');
-    return import('node:child_process').then(({ spawn }) => {
-      const child = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'send-analytics.mjs'), 'hook-backup', outbox], { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
-      child.on('error', () => { /* the row waits for the next activation */ });
-      child.unref();
-    }).catch(() => undefined);
-  } catch { return Promise.resolve(); }
-}
 
 export function jobsFor(event, data) {
   const tool = String(data.tool_name || '');
@@ -142,6 +127,16 @@ export function merge(event, results) {
   return r && !r.over && r.out.trim() ? r.out : null;
 }
 
+// ~/.claude/havok-mod/backup/<session>.json: the newest backup run of that session. Never throws.
+export const BACKUP_NOTE_DIR = 'backup';
+function noteBackup(home, sid, note) {
+  try {
+    const dir = join(home, '.claude', 'havok-mod', BACKUP_NOTE_DIR);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, sid + '.json'), JSON.stringify(note));
+  } catch { /* bookkeeping only */ }
+}
+
 function logBackup(home, line) {
   try {
     const dir = join(home, '.claude', 'havok-mod');
@@ -163,6 +158,18 @@ async function main() {
   if (sid) marker = parse((() => { try { return readFileSync(join(home, ...ALIVE_DIR.split('/'), sid + '.json'), 'utf8'); } catch { return ''; } })());
   const now = Date.now();
   if (handled(marker, event, data, now)) process.exit(0);
+  // Arming (tools/backup-arm.mjs, HAVOK 2026-11-03): hooks.json keeps only SessionStart; a session start the mod did not
+  // handle arms this session's backup block in settings.json (every resume too), and a machine without the mod is
+  // armed for good. The mod disarms its own session when it runs.
+  if (event === 'SessionStart') {
+    try {
+      const { arm, recompute, PERMANENT } = await import('../tools/backup-arm.mjs');
+      const self = fileURLToPath(import.meta.url);
+      if (!existsSync(join(home, '.claude', 'havok-mod'))) arm(home, PERMANENT, 'no mod on this machine');
+      else if (sid) arm(home, sid, 'the mod did not handle the session start (' + String(data.source || '') + ')');
+      recompute(home, self);
+    } catch { /* arming is best effort; the jobs below still run */ }
+  }
 
   const dir = process.env.HAVOK_DISPATCH_HOOKS || dirname(fileURLToPath(import.meta.url));
   const jobs = jobsFor(event, data);
@@ -178,10 +185,9 @@ async function main() {
   const modHere = existsSync(join(home, '.claude', 'havok-mod'));
   if (modHere) logBackup(home, at + ' ' + event + ' session=' + (sid || 'none') + ' why="' + why + '" ran=' + ran
     + (late.length ? ' late=' + late.join(',') : '') + (marker && marker.v ? ' mod=' + marker.v : ''));
-  if (modHere) await recordBackup(home, {
-    id: 'hb-' + randomUUID(), at, machine: String(process.env.COMPUTERNAME || hostname() || '').toUpperCase(),
-    agent: process.env.HAVOK_MOD_AGENT || '', session: sid || '', event, cause, why, ran, late: late.join(' '), mod: (marker && marker.v) || '',
-  });
+  // The status line shows it as a mod failure (The owner, 2026-11-03: "the hooks are a backup only and mods should never
+  // fail"): one small file per session, read by release/statusline.mjs, so a silent fallback can never last.
+  if (modHere && sid) noteBackup(home, sid, { at, event, cause, why });
   if (answer) process.stdout.write(typeof answer === 'string' ? answer : JSON.stringify(answer));
   process.exit(0);
 }

@@ -28,6 +28,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
+import { reportFailure } from './brain-recover.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const LOG = join(BRAIN, '.server-access.log');
@@ -148,6 +149,18 @@ try {
   warmMs = Date.now() - t0;
 } catch { warmMs = -1; }
 
+// A failed probe here is an event for tools/brain-recover.mjs, which confirms it, restarts within its hourly cap and
+// logs; this run already exists for its report, so no new timer is added (2026-11-02 freeze, nothing restarted it).
+if (up === false) reportFailure('brain', 'analytics: /health did not answer');
+if (warmMs === -1) reportFailure('embed', 'analytics: the embed server did not answer an embedding in 10 s');
+const recoverRows = [];
+try {
+  for (const line of readFileSync(join(BRAIN, '.brain-recover.log'), 'utf8').split(NL)) {
+    if (!line.trim()) continue;
+    try { const r = JSON.parse(line); if (Date.parse(r.at) >= since) recoverRows.push(r); } catch { /* torn line */ }
+  }
+} catch { /* never ran */ }
+
 const sheet = {
   generated: new Date().toISOString(),
   windowHours: HOURS,
@@ -169,6 +182,7 @@ const sheet = {
   liveGapMin,
   byHour: hours,
   byMachine,
+  restarts: recoverRows.filter((r) => r.action === 'restarted').map((r) => ({ at: r.at, what: r.what, up: r.up, why: r.why })),
 };
 
 // ---- alerts: only the things that mean the RESULTS are wrong ------------------------------
@@ -180,6 +194,11 @@ if (silences.length) found.push({ id: 'silence', text: silences.length + ' silen
 if (liveGapMin !== null && liveGapMin > SILENCE_MIN && isActiveHour(Date.now())) found.push({ id: 'silent-now', text: 'no recall reached the server for ' + liveGapMin + ' min and it is active hours' });
 for (const [ip, n] of sheet.deniedByForeign) if (n >= DENIED_SPIKE) found.push({ id: 'denied-' + ip, text: n + ' unauthenticated request(s) refused from ' + ip });
 for (const [ip, n] of sheet.scopeRefusedByForeign) if (n >= SCOPE_SPIKE) found.push({ id: 'scope-' + ip, text: n + ' scope refusals from ' + ip + ' (a recall machine reaching for the vault far more than session-start probes explain)' });
+// Raised again on every run while inside the window, or this file's rewrite would drop what brain-recover wrote.
+for (const r of recoverRows) {
+  if (r.action === 'capped') found.push({ id: 'recover-capped-' + r.what, text: 'the ' + r.what + ' server failed /health and was NOT restarted: ' + r.restartsLastHour + ' restarts in the last hour already (' + r.at + ')' });
+  if (r.action === 'restarted' && !r.up) found.push({ id: 'recover-failed-' + r.what, text: 'the ' + r.what + ' server was restarted at ' + r.at + ' and still did not answer /health' });
+}
 if (recalls.length && empty.length / recalls.length > 0.2) found.push({ id: 'empty', text: Math.round(100 * empty.length / recalls.length) + '% of recalls returned nothing' });
 
 // keep first-seen so the timer does not re-raise the same alert every five minutes

@@ -229,113 +229,6 @@ test('the window check is a safety check: past its time it refuses, and it runs 
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(fake.dir, { recursive: true, force: true }); }
 });
 
-// ---------- each activation is a row for the analytics store on the host (The owner, 2026-11-02) ----------
-
-// A stand-in for the brain server's POST /analytics: keeps each row once by id and confirms the ids, or, while
-// `down`, never answers.
-async function fakeStore() {
-  const { createServer } = await import('node:http');
-  const rows = [];
-  const seen = new Set();
-  const waiters = [];
-  const state = { down: false, auth: [] };
-  const server = createServer((req, res) => {
-    if (state.down) return;
-    let body = '';
-    req.on('data', (b) => { body += b; });
-    req.on('end', () => {
-      const p = JSON.parse(body || '{}');
-      state.auth.push(req.headers.authorization);
-      for (const r of p.rows || []) if (!seen.has(r.id)) { seen.add(r.id); rows.push({ kind: p.kind, ...r }); }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, accepted: (p.rows || []).map((r) => r.id) }));
-      waiters.splice(0).forEach((w) => w());
-    });
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const url = 'http://127.0.0.1:' + server.address().port;
-  const until = async (n, ms = 10000) => { const t0 = Date.now(); while (rows.length < n && Date.now() - t0 < ms) await new Promise((r) => { waiters.push(r); setTimeout(r, 200); }); return rows.length; };
-  return { url, rows, state, until, close: () => { server.closeAllConnections(); return new Promise((r) => server.close(r)); } };
-}
-const withToken = (root) => writeFileSync(join(root, '.claude', 'havok-server-token'), 'test-token\n');
-const outbox = (root) => { const f = join(root, '.claude', 'havok-mod', 'outbox', 'hook-backup.jsonl'); return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []; };
-const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const readCall = { ...bashEm, tool_name: 'Read', tool_input: { file_path: 'x' } };
-
-test('each backup activation sends one row (machine, agent, session, event, cause, why, ran) and nobody is messaged', async () => {
-  const root = home();
-  const fake = fakeHooks({});
-  const store = await fakeStore();
-  try {
-    withToken(root);
-    const env = { HAVOK_DISPATCH_HOOKS: fake.dir, HAVOK_ANALYTICS_URL: store.url, HAVOK_MOD_AGENT: 'agent-one', COMPUTERNAME: 'TESTBOX' };
-    const r = run(root, 'PreToolUse', readCall, env);
-    assert.equal(r.status, 0);
-    run(root, 'PreToolUse', { ...readCall, tool_use_id: 'toolu_2' }, env);
-    assert.equal(await store.until(2), 2);
-    const [a, b] = store.rows;
-    assert.equal(a.kind, 'hook-backup');
-    assert.deepEqual([a.machine, a.agent, a.session, a.event, a.cause], ['TESTBOX', 'agent-one', 's1', 'PreToolUse', 'no-marker']);
-    assert.match(a.why, /no mod marker/);
-    assert.match(a.ran, /check-limit\.mjs/);
-    assert.ok(a.id && a.id !== b.id);
-    assert.equal(store.state.auth[0], 'Bearer test-token');
-    await pause(300);
-    assert.deepEqual(outbox(root), [], 'a confirmed row stays on the machine');
-    assert.match(backupLog(root), /PreToolUse session=s1/);
-  } finally { await store.close(); rmSync(root, { recursive: true, force: true }); rmSync(fake.dir, { recursive: true, force: true }); }
-});
-
-test('a stale marker is named as the cause', async () => {
-  const root = home();
-  const fake = fakeHooks({});
-  const store = await fakeStore();
-  try {
-    withToken(root);
-    mark(root, 's1', 'PreToolUse', bashEm, Date.now() - 5 * 60_000);
-    run(root, 'PreToolUse', bashEm, { HAVOK_DISPATCH_HOOKS: fake.dir, HAVOK_ANALYTICS_URL: store.url });
-    await store.until(1);
-    assert.equal(store.rows[0].cause, 'stale-marker');
-    assert.match(store.rows[0].why, /last handled an event 30\d s ago \(mod 0\.1\.7\)/);
-  } finally { await store.close(); rmSync(root, { recursive: true, force: true }); rmSync(fake.dir, { recursive: true, force: true }); }
-});
-
-test('a server that does not answer never slows the hook; the row waits in the outbox and goes with the next activation, once', async () => {
-  const root = home();
-  const fake = fakeHooks({});
-  const store = await fakeStore();
-  try {
-    withToken(root);
-    const env = { HAVOK_DISPATCH_HOOKS: fake.dir, HAVOK_ANALYTICS_URL: store.url };
-    store.state.down = true;
-    const r = run(root, 'PreToolUse', readCall, env);
-    assert.ok(r.ms < 3000, 'took ' + r.ms);
-    await pause(1500);
-    assert.equal(store.rows.length, 0);
-    store.state.down = false;
-    // The first sender is still waiting on its silent request; a new activation finds it in flight and adds its own.
-    run(root, 'Stop', { hook_event_name: 'Stop', session_id: 's1', prompt_id: 'p1', last_assistant_message: 'ok' }, env);
-    await store.until(1);
-    for (let i = 0; i < 60 && (store.rows.length < 2 || outbox(root).length); i++) {
-      await pause(500);
-      if (i === 20) run(root, 'Stop', { hook_event_name: 'Stop', session_id: 's1', prompt_id: 'p2', last_assistant_message: 'ok2' }, env);
-    }
-    const events = store.rows.map((x) => x.event);
-    assert.ok(events.includes('PreToolUse') && events.includes('Stop'), events.join(','));
-    assert.equal(new Set(store.rows.map((x) => x.id)).size, store.rows.length);
-    assert.deepEqual(outbox(root), []);
-  } finally { await store.close(); rmSync(root, { recursive: true, force: true }); rmSync(fake.dir, { recursive: true, force: true }); }
-});
-
-test('no token on the machine: nothing is sent, the row stays in the outbox, and the hook still answers', async () => {
-  const root = home();
-  try {
-    const r = run(root, 'PreToolUse', bashEm, { HAVOK_ANALYTICS_URL: 'http://127.0.0.1:9' });
-    assert.equal(r.out?.hookSpecificOutput?.permissionDecision, 'deny');
-    await pause(1500);
-    assert.equal(outbox(root).length, 1);
-  } finally { rmSync(root, { recursive: true, force: true }); }
-});
 
 test('the backup never blocks a keep-warm ping: an old timer is told to delete itself, any other ping to answer ok', () => {
   const root = home();
@@ -348,4 +241,21 @@ test('the backup never blocks a keep-warm ping: an old timer is told to delete i
     assert.equal(own?.decision, undefined);
     assert.match(own.hookSpecificOutput.additionalContext, /single word ok/);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// The owner, 2026-11-03: "the hooks are a backup only and mods should never fail". Each backup run leaves a note per session
+// that the status line shows as a mod failure; the handled path leaves none.
+test('a backup run leaves a per-session note with its reason for the status line; a handled event leaves none', () => {
+  const root = home();
+  run(root, 'PreToolUse', bashEm);
+  const f = join(root, '.claude', 'havok-mod', 'backup', 's1.json');
+  assert.ok(existsSync(f));
+  const note = JSON.parse(readFileSync(f, 'utf8'));
+  assert.equal(note.event, 'PreToolUse');
+  assert.equal(note.cause, 'no-marker');
+  assert.match(note.why, /no mod marker/);
+  const root2 = home();
+  mark(root2, 's1', 'PreToolUse', bashEm);
+  run(root2, 'PreToolUse', bashEm);
+  assert.equal(existsSync(join(root2, '.claude', 'havok-mod', 'backup', 's1.json')), false);
 });

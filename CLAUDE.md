@@ -50,11 +50,12 @@ After writing, run `node tools/build-index.mjs`.
 
 ## One memory, not two
 
-Claude Code's built-in memory (`~/.claude/projects/<project>/memory/`) cannot be turned off, but
-facts are written in one place only: here. Two stores that are both written drift apart silently
-and one becomes confidently wrong. Keep the built-in `MEMORY.md` as a short pointer to this
-directory and write nothing else there. Never save a fact to both. The steps are in `AGENTS.md`,
-step 5.
+Facts are written in one place only: here. Claude Code's own auto memory
+(`~/.claude/projects/<project>/memory/`) stays off, with `"autoMemoryEnabled": false` in
+`~/.claude/settings.json`, because two stores that are both written drift apart silently and one
+becomes confidently wrong. Its `MEMORY.md` is kept as a short pointer to this directory and nothing
+else is written there. Never save a fact to both. If you see an auto memory section in your context,
+or new notes in that folder, auto memory is on again: tell the person and follow `AGENTS.md`, step 5.
 
 ## The gate
 

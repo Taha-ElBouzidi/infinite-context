@@ -2,6 +2,18 @@
 
 Infinite Context, infinite context for your AI model.
 
+## 0.4.89
+
+What the engine spends and what it keeps. Nothing here touches your memories.
+
+- **Sized to your plan.** A new setting, `plan`, says how much the assistant may spend: `small` (about 20 dollars a month, the default), `standard` (about 100) or `large` (about 200 or more); the prices are approximate, the choice is about how tight the limits are. Set it at install with `node tools/init.mjs --plan small`, see or change it with `node tools/plan.mjs`. The recall hook adds one `PLAN:` line to every turn. On `small` the assistant starts no helper agent and no background task unless you ask, uses the small or balanced model and low effort for a helper you ask for, and keeps the strongest model and high effort for what you ask it to think hard about. `standard` allows a helper on its own for a large task with independent parts, at most two at a time; `large` lets helpers run in parallel. An install without the setting counts as `small`.
+- **The built-in rule about helpers follows the plan.** Until now the seeded rule said to run sub-agents in the background and in parallel whenever a task split into parts, which spends a small plan's limit fast; a person on a 20 dollar plan reported it. New installs get the reworded rule. On an existing install, `node tools/plan.mjs small` (or your plan) rewords it in place when you never changed it, and the `PLAN:` line takes precedence either way. The how-to memories on briefing helpers and on research say the same (kit methods, version 2, refreshed by the next update).
+- **One memory: turn off Claude Code's auto memory.** `AGENTS.md` step 5 now has the installing agent set `"autoMemoryEnabled": false` in `~/.claude/settings.json`, after moving what the built-in memory held into `memory/` and leaving its `MEMORY.md` as a pointer. Two written stores drift apart silently. The troubleshooting table and `CLAUDE.md` say what to do when auto memory comes back on.
+- **No usage collection, at all.** The public version no longer contains the code that recorded prompts, turns, compactions and hook activity for analysis: the prompt log of the recall hook (`usage-collection.json` window) and its `/usage` route, the `/analytics` and `/compaction-log` routes of the brain server, the compaction recorder (`hooks/post-compact.mjs`, `hooks/compact-rules.mjs`), the sender `hooks/send-analytics.mjs`, and the store and counter behind them. In 0.4.80 they were off without a file no install has; now they are not shipped. What stays is only data shown back to you on your own machine: the recall log behind the dashboard, `tools/status.mjs` and `tools/analytics.mjs`, which read logs that never leave it.
+
+- **Every shipped test passes after `node tools/init.mjs`.** Tests that need the maintainers' own setup (their git hooks, rule set or optional mod) are no longer shipped, and the graph build test no longer counts a finished build as running on a small brain. The README says to run init before the tests. The maintainers' release tools for the mod (`tools/machine-update.mjs`, `tools/release-publish.mjs`) are no longer shipped.
+- **The reserve approval line is `reserve-approved-by-owner:`**, a generic name, in the commit message check.
+
 ## 0.4.80
 
 Privacy and safety review before publishing. Nothing here touches your memories.

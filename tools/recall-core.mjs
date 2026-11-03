@@ -69,6 +69,8 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
   const SPREAD_ITERS = 20;
   const MEANING_K = 5;
   const MEANING_FLOOR = 0.55;
+  // The whole message must be embedded within this, or recall answers keyword only. The hook gives /recall 9 s in all.
+  const EMBED_BUDGET_MS = Number(process.env.RECALL_EMBED_BUDGET_MS || 6000);
 
   let partBar = null, partLinkBar = null;
 
@@ -205,7 +207,6 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
 
     // DENSE, max-pooled across chunks rather than averaged. Taking the best chunk is the entire
     // point; a mean reintroduces exactly the dilution that chunking was added to remove.
-    const e = await getEmbedder();
     const best = new Float64Array(emb.slugs.length).fill(-Infinity);
     const queryVectors = [];
     let embedded = 0;
@@ -217,9 +218,26 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
        meaning bar. Then: singles 111 to 112, two-memory 80 to 82, and follow-ups like "ok lower it to
        1700" are found. */
     const ctxBest = new Float64Array(emb.slugs.length).fill(-Infinity);
-    for (let qi = 0; qi < queries.length; qi++) {
-      const o = await e(String(queries[qi]).slice(0, 4000), { pooling: 'mean', normalize: true });
-      const qv = o.data;
+    /* ALL OR NOTHING, AND BOUNDED (2026-11-02 freeze). The embedder may fail or time out (tools/embed-guard.mjs), and a
+       slow machine can answer each call just under its limit, many times over. Either every query is embedded within
+       EMBED_BUDGET_MS, or none is used and recall answers from the keyword channel alone, the path it already takes
+       with no vectors, and the result carries why (degraded) so the caller can say so. Half the queries would rank
+       the message on some of its parts and not others, which is worse than an honest keyword answer. */
+    let vectors = [];
+    let degraded = '';
+    try {
+      const e = await getEmbedder();
+      const t0 = Date.now();
+      for (let qi = 0; qi < queries.length; qi++) {
+        if (qi > 0 && Date.now() - t0 > EMBED_BUDGET_MS) throw new Error('embedding the message took over ' + EMBED_BUDGET_MS + ' ms');
+        vectors.push((await e(String(queries[qi]).slice(0, 4000), { pooling: 'mean', normalize: true })).data);
+      }
+    } catch (err) {
+      vectors = [];
+      degraded = String((err && err.message) || err).slice(0, 160);
+    }
+    for (let qi = 0; qi < vectors.length; qi++) {
+      const qv = vectors[qi];
       queryVectors.push(qv);
       embedded++;
       const target = (contextIndex >= 0 && qi >= contextIndex) ? ctxBest : best;
@@ -281,11 +299,21 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
     const ranked = [...fused.entries()].sort((a, b) => b[1] - a[1]);
     let chosen = ranked.slice(0, limit).map(([s]) => s);
     const linked = new Set();
+    // Chosen only because the CONVERSATION matched them, not the message itself. Turn recall (tools/recall-turn.mjs) uses
+    // it to re-match the memories a session was already shown: a link or the conversation alone does not keep one.
+    const viaContext = new Set();
     if (RECALL_MODE === 'threshold' && !explicitLimit && embedded) {
       chosen = ranked.slice(0, ALWAYS_FUSED).map(([s]) => s);
       const meaning = emb.slugs.map((s, i) => [s, Math.max(best[i], qBest.get(s) ?? -Infinity, ctxBest[i] * CONTEXT_WEIGHT)])
         .filter(([, v]) => v >= (partBar ?? MEANING_BAR)).sort((a, b) => b[1] - a[1]);
-      for (const [s] of meaning) if (!chosen.includes(s)) chosen.push(s);
+      const bar = partBar ?? MEANING_BAR;
+      const at0 = new Map(emb.slugs.map((s, i) => [s, i]));
+      for (const [s] of meaning) {
+        if (chosen.includes(s)) continue;
+        chosen.push(s);
+        const i = at0.get(s);
+        if (Math.max(best[i], qBest.get(s) ?? -Infinity) < bar) viaContext.add(s);
+      }
       // EACH PART OF A MESSAGE BRINGS ITS OWN BEST MEMORIES (2026-09-26). The hook sends the whole message
       // first, then its parts (queries 1..parts), then the conversation. A long message touches many topics,
       // and a part's best memory often scores 0.34 to 0.47, under the shared meaning bar. Offline on the real
@@ -393,11 +421,21 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
         .sort((a, b) => b[1] - a[1])
         .forEach(([s]) => { chosen.push(s); linked.add(s); });
     }
-    return chosen
+    const idxOf = new Map(emb.slugs.map((s, i) => [s, i]));
+    const matchOf = (s) => {
+      const i = idxOf.get(s);
+      if (!embedded || i === undefined) return null;
+      const v = Math.max(best[i], qBest.get(s) ?? -Infinity);
+      return Number.isFinite(v) ? +v.toFixed(3) : null;
+    };
+    const out = chosen
       .map((slug, rank) => {
         const hit = {
           slug,
           how: linked.has(slug) ? 'linked' : bySparse.has(slug) && byDense.has(slug) ? 'both' : byDense.has(slug) ? 'meaning' : 'keyword',
+          direct: !linked.has(slug) && !viaContext.has(slug),
+          // How well the message itself matches it (best meaning over the message and its parts, conversation excluded).
+          match: matchOf(slug),
           description: kw.descriptions[slug] || '',
         };
         /* THE BODY TRAVELS WITH THE HIT WHEN THE CALLER ASKS. The owner, 2026-09-21: "local recall, and
@@ -419,6 +457,9 @@ export function makeRecall({ brain, getEmbedder, indexVersion }) {
         }
         return hit;
       });
+    // Not enumerable, so it never reaches a JSON answer by accident; the server reads it and says so itself.
+    if (degraded) Object.defineProperty(out, 'degraded', { value: degraded });
+    return out;
   }
   // Which index version recall is answering from now (null before the first build). Read by tests and /health.
   recall.snapshotVersion = () => (current ? current.v : null);

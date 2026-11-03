@@ -28,11 +28,22 @@ Requires Node 18 or newer. Nothing else.
 ```sh
 git clone https://github.com/Taha-ElBouzidi/infinite-context
 cd infinite-context
-node tools/init.mjs            # seeds five rules, installs the embedding runtime, builds the index
-node tools/install-hook.mjs    # wires Claude Code to it. Restart your session after.
+node tools/init.mjs --plan small   # seeds eight rules, installs the embedding runtime, builds the index
+node tools/install-hook.mjs        # wires Claude Code to it. Restart your session after.
 ```
 
-That is the whole install. Recall works on the next prompt, by keyword **and by meaning**: a
+`--plan` sizes the assistant to what you pay for: `small` (about 20 dollars a month, the default)
+starts no helper agents or background tasks unless you ask and keeps to lighter models and effort,
+`standard` (about 100 dollars) allows a few helpers for large tasks, `large` (about 200 dollars or more)
+lets helpers run in parallel. The prices are approximate; pick by how tight your usage limits are.
+Change it any time with `node tools/plan.mjs <plan>`.
+
+Then turn off Claude Code's own auto memory, so there is one memory and not two that drift apart:
+add `"autoMemoryEnabled": false` to `~/.claude/settings.json` (steps in `AGENTS.md`, step 5).
+
+That is the whole install. Nothing you type is collected for analysis or sent off your machine: what
+the engine keeps about your use (for example the recall log behind the dashboard, `tools/status.mjs`
+and `tools/analytics.mjs`) stays on your machine, for you. Recall works on the next prompt, by keyword **and by meaning**: a
 question with no word in common with a memory still finds it. The first `init` downloads the
 embedding model, about 280MB, once. The hook starts the local embedder itself whenever it is
 not running, so there is nothing to keep alive by hand.
@@ -197,6 +208,10 @@ node tools/eval-recall.mjs     # accuracy against a fixed query set
 node tools/bench-recall.mjs    # latency of the real hook, end to end
 node tools/analytics.mjs       # results sheet from every logged call, with alerts
 ```
+
+The tests need an installed brain: run `node tools/init.mjs` first (it builds the index and installs the
+model runtime several tests use), then `node --test tools/*.test.mjs hooks/*.test.mjs`. In a fresh clone
+without init, the tests that read the index or the model fail.
 
 ## Updates
 

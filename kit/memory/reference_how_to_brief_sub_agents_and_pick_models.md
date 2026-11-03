@@ -5,14 +5,18 @@ type: reference
 metadata:
   type: reference
   asserted: 2026-09-26
-  updated: 2026-09-26
-  kit_version: 1
-  kit_hash: 78b4c4c911e08af6
+  updated: 2026-11-03
+  kit_version: 2
+  kit_hash: 25232210ce511714
 ---
 
 # How to brief sub-agents and pick the right model
 
-A sub-agent is worth starting only when a task splits into parts that do not depend on each other: researching several options, checking several files, writing tests while another agent reads documentation. Those parts run in parallel and in the background, so the main conversation is never blocked waiting on them. A task whose steps each need the previous step's result should not be split; that work gets done directly, in order, by whoever is already holding the context.
+A sub-agent is worth starting only when a task splits into parts that do not depend on each other: researching several options, checking several files, writing tests while another agent reads documentation. Those parts can run in parallel and in the background, so the main conversation is not blocked waiting on them, but only as far as the person's plan allows. A task whose steps each need the previous step's result should not be split; that work gets done directly, in order, by whoever is already holding the context.
+
+## How much the plan allows
+
+The plan setting (`node tools/plan.mjs`, shown as a PLAN line in every turn) comes first. On a small plan, such as 20 dollars a month, no sub-agent and no background task starts unless the person asks for one, and the one they ask for runs on the small or balanced model with low effort. On a standard plan, a sub-agent may start on its own only for a large task with independent parts, at most two at a time. On a large plan, sub-agents may run in parallel in the background, still no more than the task needs.
 
 ## How much delegation a question deserves
 

@@ -34,7 +34,24 @@ import { fileURLToPath } from 'node:url';
 import { homedir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { terms as qterms } from '../tools/tokenize.mjs';
-import { execFileSync, spawn } from 'node:child_process';
+import { CONTEXT_CHARS, contextMessage, prepareQueries, translateSync } from '../tools/recall-turn.mjs';
+import { reportFailure } from '../tools/brain-recover.mjs';
+import { execFileSync as execFileSyncRaw, spawn } from 'node:child_process';
+// THE HOOK'S OWN DEADLINE (HAVOK, 2026-11-03). On the locked-down client machine the brain was briefly unreachable over the office relay,
+// the hook ran past Claude Code's 10 s limit and was killed: the turn lost its rules and recall and nothing said so.
+// Every blocking call is clipped to what is left of HOOK_LIMIT_MS; once it is spent, calls fail at once and the
+// injection says "brain unreachable, recall skipped" in one line. Tested by tools/preturn-deadline.test.mjs.
+let DEADLINE_HIT = false;
+function execFileSync(file, args, opts = {}) {
+  const left = msLeft();
+  if (left < 150) { DEADLINE_HIT = true; throw new Error('hook deadline reached'); }
+  try {
+    return execFileSyncRaw(file, args, { ...opts, timeout: Math.min(Number(opts.timeout) || left, left) });
+  } catch (e) {
+    if (msLeft() < 150) DEADLINE_HIT = true;
+    throw e;
+  }
+}
 const HOOK_STARTED = Date.now();
 // The owner, 2026-10-16: "instead of 100,000 or 250, let's put it at 300,000 tokens". Same number as autoCompactWindow
 // in hooks/claude-settings.json.
@@ -58,28 +75,8 @@ const COMPACT_FROM = 300000;
 // stale file (a hard kill) costs exactly one slow turn before curl fails and it is cleared.
 const ALIVE = join(homedir(), '.claude', 'havok-embed.alive');
 
-// Translate a non-English prompt with the local claude CLI.
-//
-// Deliberately the smallest possible invocation: haiku, no MCP, no skills, no tools, and its
-// own system prompt file so it cannot inherit the brain hooks. Without --system-prompt-file
-// the call picked up this very brain and ANSWERED the question instead of translating it.
-function translateSync(text, brainDir) {
-  try {
-    const sys = join(brainDir, 'index', 'translate-system.txt');
-    if (!existsSync(sys)) return null;
-    const out = execFileSync('claude', [
-      '-p', '--model', 'haiku', '--output-format', 'json',
-      '--system-prompt-file', sys,
-      '--strict-mcp-config', '--disable-slash-commands',
-      '--disallowed-tools', 'Bash Read Write Edit Glob Grep WebFetch WebSearch Task Agent TodoWrite Monitor Skill SlashCommand',
-    ], {
-      input: Buffer.from(text, 'utf8'),
-      encoding: 'utf8', windowsHide: true, timeout: 20000, stdio: ['pipe', 'pipe', 'ignore'],
-    });
-    const r = JSON.parse(out || '{}').result;
-    return (typeof r === 'string' && r.trim() && r.length < 500) ? r.trim() : null;
-  } catch { return null; }
-}
+// translateSync, the query building and the conversation reading live in tools/recall-turn.mjs since the context
+// release (2026-11-02): the brain server runs the same code for the mod, so both give the same recall.
 
 // Ask the SERVER machine for a vector when this machine has no local daemon.
 //
@@ -330,7 +327,7 @@ function cachedRules() {
 // A shorter timeout alone does not solve it: one second on every turn forever is still a tax on
 // the common case. A stat() is microseconds, so after a failure the remote is skipped entirely
 // until the cooldown lapses. Same trick the local daemon check already uses.
-const REMOTE_DOWN = join(homedir(), '.claude', 'havok-remote-embed-down');
+const REMOTE_DOWN = join(process.env.HAVOK_HOME || join(homedir(), '.claude'), 'havok-remote-embed-down');
 // 3 minutes, not 10. Measured 2026-08-31 (reference_recall_connect_timeout_derp): over the relay a
 // lost race is common and each one cost ten minutes of keyword-only recall. That fix never reached
 // this copy; the locked-down client machine lost recall for ten minutes again on 2026-09-17, 15:43 to 15:54.
@@ -345,8 +342,8 @@ const DOWN_COOLDOWN_MS = 3 * 60 * 1000;
 // The retry only spends what is left of the hook's limit: settings.json runs this hook with a 10 s
 // timeout, and past it Claude Code discards the whole injection, rules included. The margin keeps time
 // for the work after the call. Tested by tools/test-remote-retry.mjs, which runs this exact text.
-const HOOK_LIMIT_MS = 10000;
-const HOOK_MARGIN_MS = 1500;
+const HOOK_LIMIT_MS = Number(process.env.HAVOK_PRETURN_LIMIT_MS) || 5000;
+const HOOK_MARGIN_MS = 500;
 function curlRemote(conf, timeoutMs, cfg) {
   const t0 = Date.now();
   try {
@@ -605,6 +602,8 @@ function fetchRecallLocal(prompt, queries, brain, parts = 0, contextIndex = -1) 
   } catch { MISS.local = 'the local embed server did not answer its recall within ' + budget + ' s'; return null; }
 }
 
+// The server answered, but from its keyword channel alone (its embedder failed or ran out of time), and says why.
+let SERVER_NOTE = '';
 function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1) {
   if (remoteRecentlyFailed()) { MISS.remote = skippedWhy(); return null; }
   const cfg = remoteEmbedConfig(brain);
@@ -645,6 +644,7 @@ function fetchRecallRemote(prompt, queries, brain, parts = 0, contextIndex = -1)
       return null;
     }
     try { unlinkSync(REMOTE_DOWN); } catch { /* was not marked */ }
+    SERVER_NOTE = typeof parsed.note === 'string' ? parsed.note.slice(0, 400) : '';
     return parsed.ranked;
   } catch (e) {
     MISS.remote = remoteFailWhy(e, Date.now() - t0, cfg, 9);
@@ -710,10 +710,17 @@ function repairIndexInBackground(serverVersion, brain) {
   return 'refreshing';
 }
 
+// The brain folder this turn resolved, set in main; recovery needs its tools/ and vault-recipients.json.
+let RECOVER_BRAIN = null;
 function markRemoteDown(reason) {
+  // The hook's own deadline ran out before the call: that says nothing about the server.
+  if (/hook deadline reached/.test(String(reason))) return;
   try {
     writeFileSync(REMOTE_DOWN, JSON.stringify({ at: Date.now(), reason: reason || 'unknown' }), 'utf8');
   } catch { /* best effort, a mark that cannot be written just costs a retry next turn */ }
+  // The failed recall is the event that starts recovery (tools/brain-recover.mjs); it does nothing off the brain host.
+  // A rate limit or a bad token is not a down server, and restarting would not fix either.
+  if (RECOVER_BRAIN && !/rate limited|token/i.test(String(reason))) reportFailure('brain', 'pre-turn: ' + String(reason || 'unknown').slice(0, 160), RECOVER_BRAIN);
 }
 
 // Start the local embedder ourselves when it is not running, so semantic recall is on by default
@@ -774,6 +781,19 @@ function fetchVectorSync(text, brain) {
   } catch { ensureEmbedDaemon(brain); return fetchVectorRemote(text, brain); }
 }
 
+// RUN BY THE BRAIN'S DISPATCHER AS A BACKUP (HAVOK, 2026-11-03): hooks/dispatch.mjs runs this file with --from-plugin
+// only when the mod did not handle the prompt (its handled mark is missing), so it never runs beside the mod's
+// recall. It still stands down while ~/.claude/settings.json holds a hand-written pre-turn entry, which runs it
+// already (removed by the install step once every live session runs the new plugin). Unreadable files count as absent.
+export function pluginEntryStandsDown(home = process.env.HAVOK_HOME || resolve(homedir(), '.claude')) {
+  try {
+    const st = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8'));
+    const groups = st?.hooks?.UserPromptSubmit;
+    if (Array.isArray(groups) && groups.some((g) => (g?.hooks || []).some((h) => /pre-turn\.mjs/.test(String(h?.command || ''))))) return true;
+  } catch { /* no settings file */ }
+  return false;
+}
+
 const ok = (ctx) => {
   if (ctx) {
     process.stdout.write(JSON.stringify({
@@ -792,7 +812,6 @@ const ok = (ctx) => {
 //
 // Capped hard. This is a topic hint, not a second prompt, and an unbounded tail would push the
 // question out of the way exactly as a long paste does.
-const CONTEXT_CHARS = 700;
 /* ONLY THE END OF THE TRANSCRIPT IS EVER READ. This used to readFileSync the whole file and split
    it, under a comment claiming it was "never parsed whole". It was walked backwards, but only after
    every byte had been read and split. A long conversation's transcript reached 529 MB on
@@ -817,97 +836,6 @@ function tailLines(tp, enough) {
       if (enough(lines) || len >= size || want >= TAIL_MAX) return lines;
     }
   } finally { closeSync(fd); }
-}
-/* WHAT THE AGENT ACTUALLY OPENED, for training recall on real use. The owner, 2026-09-28: gather about 20
-   days of real data, then train the search model on it at most once a month, but only if it helps. The
-   synthetic pairs gave a small gain (reference_trained_recall_model_vs_agent); real pairs are the
-   untested part. So at the start of each turn this sends the PREVIOUS turn's prompt and the memories
-   opened during it to the server, which keeps them in an untracked log. It ends by itself on the date in
-   usage-collection.json, and sends only to the brain server this machine is set up for. */
-const USAGE_SENT = join(homedir(), '.claude', 'havok-usage-sent.json');
-// WHAT RECALL OFFERED, kept per session until the next turn. On a machine with no memories the top bodies arrive
-// inline, so the agent never opens a file and "opened" stays empty: found 2026-10-02, a laptop client and the locked-down client machine sent
-// no rows after updating. The offered list and the start of the answer let the analysis judge which were used.
-const OFFERED_DIR = join(homedir(), '.claude', 'havok-usage-offered');
-function rememberOffered(payload, prompt, hits) {
-  try {
-    const sid = String(payload && payload.session_id || '').replace(/[^\w-]/g, '');
-    if (!sid || !hits || !hits.length) return;
-    mkdirSync(OFFERED_DIR, { recursive: true });
-    writeFileSync(join(OFFERED_DIR, sid + '.json'), JSON.stringify({ prompt: String(prompt).trim().slice(0, 4000), slugs: hits.map((h) => h.slug).slice(0, 40) }));
-  } catch { /* bookkeeping only */ }
-}
-function genuinePrompt(o) {
-  if (!o || o.type !== 'user' || o.isMeta || o.isCompactSummary) return null;
-  const c = o.message && o.message.content;
-  let text = '';
-  if (typeof c === 'string') text = c;
-  else if (Array.isArray(c)) {
-    if (c.some((p) => p && p.type === 'tool_result')) return null;
-    text = c.filter((p) => p && p.type === 'text').map((p) => p.text).join(' ');
-  }
-  text = text.trim();
-  if (!text || text.startsWith('<') || text.includes('[SYSTEM NOTIFICATION')) return null;
-  return text;
-}
-function openedIn(tool) {
-  const slugs = [], queries = [];
-  const input = (tool && tool.input) || {};
-  const blob = [input.file_path, input.command, input.pattern && input.path].filter((x) => typeof x === 'string').join(' ');
-  for (const m of blob.matchAll(/memory[\\/]+([A-Za-z0-9_-]+)\.md/g)) if (m[1] !== 'MEMORY') slugs.push(m[1]);
-  for (const m of blob.matchAll(/brain-client\.mjs\s+read\s+([A-Za-z0-9_-]+)/g)) slugs.push(m[1]);
-  for (const m of blob.matchAll(/brain-client\.mjs\s+recall\s+([^\n;&|]+)/g)) queries.push(m[1].replace(/["']/g, '').trim());
-  return { slugs, queries };
-}
-function logPreviousTurn(payload, currentPrompt, brain) {
-  try {
-    let window;
-    // No usage-collection.json, no collection.
-    try { window = JSON.parse(readFileSync(join(brain, 'usage-collection.json'), 'utf8')); } catch { return; }
-    const today = new Date().toISOString().slice(0, 10);
-    if (!window.from || !window.until || today < window.from || today > window.until) return;
-    const tp = payload && payload.transcript_path;
-    if (!tp || !existsSync(tp)) return;
-    const rows = [];
-    // A turn full of tool output can run past the first megabyte, so read back until three user
-    // lines that are not tool results are in view: the current prompt, the turn before it, and one spare.
-    const enough = (lines) => lines.filter((l) => l.includes('"type":"user"') && !l.includes('tool_result')).length >= 3;
-    for (const l of tailLines(tp, enough)) { try { rows.push(JSON.parse(l)); } catch { /* partial line */ } }
-    const prompts = [];
-    rows.forEach((o, i) => { const t = genuinePrompt(o); if (t) prompts.push({ i, t, uuid: o.uuid }); });
-    if (prompts.length && prompts[prompts.length - 1].t === currentPrompt.trim()) prompts.pop();
-    const turn = prompts[prompts.length - 1];
-    if (!turn || !turn.uuid) return;
-    let sent = [];
-    try { sent = JSON.parse(readFileSync(USAGE_SENT, 'utf8')); } catch { /* first run */ }
-    if (sent.includes(turn.uuid)) return;
-    const opened = new Set(), queries = new Set();
-    let answer = '';
-    for (let i = turn.i + 1; i < rows.length; i++) {
-      if (genuinePrompt(rows[i])) break;
-      const c = rows[i].message && rows[i].message.content;
-      if (rows[i].type !== 'assistant' || !Array.isArray(c)) continue;
-      const said = c.filter((p) => p && p.type === 'text').map((p) => p.text).join(' ').trim();
-      if (said) answer = said;
-      for (const p of c) if (p && p.type === 'tool_use') {
-        const r = openedIn(p);
-        r.slugs.forEach((s) => opened.add(s)); r.queries.forEach((q) => queries.add(q));
-      }
-    }
-    writeFileSync(USAGE_SENT, JSON.stringify([...sent, turn.uuid].slice(-200)), 'utf8');
-    let offered = [];
-    try {
-      const o = JSON.parse(readFileSync(join(OFFERED_DIR, String(payload.session_id || '').replace(/[^\w-]/g, '') + '.json'), 'utf8'));
-      if (o.prompt === turn.t.slice(0, 4000)) offered = o.slugs || [];
-    } catch { /* nothing offered for that turn */ }
-    if (!opened.size && !queries.size && !offered.length) return;
-    postJson('/usage', {
-      at: Date.now(), host: hostname(),
-      session: createHash('sha256').update(String(payload.session_id || '')).digest('hex').slice(0, 12),
-      prompt: turn.t.slice(0, 4000), opened: [...opened].slice(0, 40), queries: [...queries].slice(0, 10),
-      offered: offered.slice(0, 40), answer: answer.slice(0, 1500),
-    }, brain);
-  } catch { /* data collection must never break a turn */ }
 }
 
 function readRecentContext(payload) {
@@ -934,16 +862,15 @@ function recentMessages(lines) {
     let text = "";
     if (typeof c === "string") text = c;
     else if (Array.isArray(c)) text = c.filter((p) => p && p.type === "text").map((p) => p.text).join(" ");
-    text = String(text).replace(new RegExp("\\s+", "g"), " ").trim();
-    // Skip the harness noise: hook injections and tool dumps are not what the turn is about.
-    if (!text || text.length < 12) continue;
-    if (/HOW TO REPLY|BRAIN RECALL|system-reminder|<function_/i.test(text)) continue;
-    msgs.unshift(text.slice(0, 400));
+    // Folded, too short and harness lines skipped, 400 characters kept: tools/recall-turn.mjs, shared with the server.
+    const m = contextMessage(text);
+    if (m) msgs.unshift(m);
   }
   return msgs;
 }
 
 try {
+  if (process.argv.includes('--from-plugin') && pluginEntryStandsDown()) ok('');
   const HERE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const marker = (() => {
     try { return readFileSync(resolve(process.env.HAVOK_HOME || resolve(homedir(), '.claude'), 'havok-brain-path'), 'utf8').trim(); }
@@ -966,6 +893,7 @@ try {
   // come second, so a second brain installed on a machine that already had one silently recalled
   // from the first. Found on 2026-09-05 by cloning the export on the author's own machine.
   const BRAIN = [process.env.HAVOK_BRAIN, HERE, marker].find(isBrain) || HERE;
+  RECOVER_BRAIN = BRAIN;
 
   let raw = '';
   try { raw = readFileSync(0, 'utf8'); } catch { /* no stdin */ }
@@ -976,7 +904,6 @@ try {
   // A keep-warm ping (hooks/check-keep-warm.mjs) only refreshes the cache; injecting rules and recall into it would
   // add thousands of tokens to the conversation for nothing.
   if (prompt.trim() === 'keep-warm ping') ok('');
-  logPreviousTurn(payload, prompt, BRAIN);
   // A background-task or system notification arrives through this hook like a prompt, but it is not a
   // question: on 2026-09-26 one pulled 40 memories of noise. The rules still go in; recall is skipped.
   const systemEvent = prompt.trimStart().startsWith('<task-notification>') || prompt.includes('[SYSTEM NOTIFICATION - NOT USER INPUT]');
@@ -1097,6 +1024,18 @@ try {
     out.push('(brain rules unavailable: no local index/rules.json and the brain server could not be'
       + ' reached. You are running with almost no behaviour rules. Tell the owner before answering.)');
   }
+  // THE PLAN LINE (hooks/plan-rules.mjs; the owner, 2026-11-03: a 20 dollar plan uses less, a large plan can use more).
+  // "plan" in brain.json says how many helpers, which models and how much background work; an install of the public
+  // repository with no setting counts as small. A brain with neither gets no line, so nothing changes for it.
+  try {
+    const { planOf, planLine } = await import('./plan-rules.mjs');
+    let cfg = {};
+    try { cfg = JSON.parse(readFileSync(join(BRAIN, 'brain.json'), 'utf8')); } catch { /* no settings file */ }
+    let pub = false;
+    try { pub = JSON.parse(readFileSync(join(BRAIN, 'package.json'), 'utf8')).name === 'infinite-context'; } catch { /* not an install */ }
+    const line = planLine(planOf(cfg, pub));
+    if (line) out.push('', line);
+  } catch { /* the plan line is a help, never a reason to lose the turn */ }
 
   // ---- 2. RECALL -----------------------------------------------------------------------
   const idxPath = join(BRAIN, 'index', 'keywords.json');
@@ -1131,109 +1070,12 @@ try {
       // exists for could never reach it.
       const emb = existsSync(embPath) ? JSON.parse(readFileSync(embPath, "utf8")) : null;
       {
-        // Arabic script: skip the dense channel and say so.
-        //
-        // The model is English-only by deliberate choice (the owner: "we work 99% in english
-        // only"), and it scores near zero on Arabic rather than failing. A near-zero score
-        // still RANKS, so the fusion would happily promote whatever noise came top, which is
-        // worse than not scoring at all. The tokenizer drops Arabic too, so both channels are
-        // blind and the only honest move is to say so and let him retype in English.
-        const hasArabic = /[؀-ۿݐ-ݿ]/.test(prompt);
-        // Arabic: translate to English first, then embed the translation.
-        //
-        // Three approaches were measured on 2026-08-19, and only the third works:
-        //   1. Multilingual model. Handles Arabic but drops the English eval 100 -> 92.5,
-        //      and the right memory still ranked 47th, because every description is English.
-        //   2. Character transliteration. Free, and made it WORSE: rank 94 -> 120. Naive
-        //      mapping produces "kyfach nsjl alkryatyn", which is not how Darija is written
-        //      in Latin script, so it matches nothing.
-        //   3. Translate with the local claude CLI. "How do we log creatine?", which
-        //      retrieves correctly. Costs 5.5s.
-        //
-        // 5.5s is 42x the normal 129ms turn, so it is paid ONLY on an Arabic prompt, which
-        // the owner says is about 1% of what he writes. English turns are untouched. If the
-        // translation fails or times out, the turn degrades to the honest "brain was not
-        // consulted" note rather than embedding text the model cannot read.
-        let queryText = prompt.slice(0, 2000);
-        if (hasArabic) {
-          const translated = translateSync(queryText, BRAIN);
-          if (translated) {
-            queryText = translated;
-            denseNote = "NOTE: your prompt was in Arabic. It was translated to English for recall (\"" + translated.slice(0, 80) + "\"). If that translation is wrong, the memories below are the wrong ones.";
-          } else {
-            denseNote = "NOTE: this prompt is in Arabic and the translation step failed, so the brain was NOT consulted. Ask again in English or French, or tell the owner the brain was not searched for this one.";
-          }
-        }
-        // CHUNK a long prompt instead of averaging it into one vector.
-        //
-        // Found 2026-08-22 by watching a live prompt from a laptop client log as chars=2000 exactly,
-        // which is a cap and not a coincidence. The sparse channel was fixed months ago to read
-        // the whole prompt, because the owner pastes logs and emails constantly and his question lands
-        // after the paste. The dense channel never got that fix and still saw the first 2000
-        // characters only.
-        //
-        // Sending MORE text does not fix it, and two wrong attempts proved that before this one.
-        // Measured on a 2402-char prompt whose question started at char 2341, target memories at:
-        //   head 2000 (the shipped behaviour) : rank 74 and 37
-        //   head 2000 + tail 2000             : rank 68 and 38   <- first attempt, useless
-        //   tail 500 alone                    : rank 10 and  5
-        //   the question with no paste at all : rank  1 and  3
-        // A 2000-char tail of a 2402-char prompt is still 97% paste. One 384-dim vector cannot
-        // represent a long paste AND a short question: the mean washes the question out.
-        //
-        // So: split into sentence-packed chunks and take each memory's BEST-matching chunk rather
-        // than its similarity to the average. A question then competes on its own merits instead
-        // of being outvoted by volume. Standard long-document retrieval, measured here at:
-        //   paste then question : rank 1 and 5   (was 74 and 37)
-        //   question then paste : rank 4 and 9   (was 19 and 13)
-        // Better on both shapes, and identical to today on short prompts, which take one call.
-        //
-        // Cost is bounded: chunking only happens above 2000 chars, at most 10 calls, measured at
-        // about 330ms locally. Long prompts are rare and already slow to type.
-        const CHUNK_CHARS = 400, MAX_CHUNKS = 8;
-        function chunkPrompt(text) {
-          const parts = text.split(/(?<=[.!?\n])\s+/);
-          const out = [];
-          let cur = '';
-          for (const p of parts) {
-            if ((cur + ' ' + p).length > CHUNK_CHARS && cur) { out.push(cur.trim()); cur = p; }
-            else cur = cur ? cur + ' ' + p : p;
-          }
-          if (cur.trim()) out.push(cur.trim());
-          let kept = out;
-          if (out.length > MAX_CHUNKS) {
-            const end = Math.ceil(MAX_CHUNKS / 2);
-            kept = [...out.slice(0, MAX_CHUNKS - end), ...out.slice(-end)];
-          }
-          // The packer glues short sentences together until a chunk is full, which buries a
-          // 62-char question inside 400 chars of paste. Embed the first and last SENTENCE on
-          // their own too, because that is where a question actually lives. Without this, the
-          // "question then paste" shape scored 0 of 2; with it, 1 of 2.
-          const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-          if (sentences.length > 1) {
-            for (const edge of [sentences[0], sentences[sentences.length - 1]]) {
-              if (edge.length >= 12 && edge.length <= CHUNK_CHARS && !kept.includes(edge)) kept.push(edge);
-            }
-          }
-          return kept;
-        }
-
-        // The context is an EXTRA query, not a replacement. Scoring takes the best chunk, so a
-        // prompt that names its own subject keeps winning on its own chunk exactly as before,
-        // and a bare follow-up gains a second chance through the topic it sits in.
-        // A short message that mixes topics ("log my lunch, also did a client pay") is split into its parts,
-        // each searched on its own beside the whole, and each memory keeps its best score. One vector for
-        // the whole message averages the topics and matches none of them well. Measured 2026-09-25 on 30
-        // messages each needing 2 to 4 unrelated memories: fully answered 8 to 15, and on the 280 real
-        // questions two-memory 75 to 77, singles 157 to 158, with no more memories returned.
-        const splitParts = (t) => {
-          const parts = String(t).split(/(?<=[.?!])\s+|\s+(?:also|and also|et aussi|aussi|btw|plus)\s+|,\s+(?:and|et)\s+|;\s+/i)
-            .map((s) => s.trim()).filter((s) => s.length >= 15);
-          return parts.length > 1 ? parts.slice(0, 8) : [];
-        };
-        const baseQueries = (!hasArabic && prompt.length > 2000) ? chunkPrompt(prompt) : [queryText, ...(hasArabic ? [] : splitParts(queryText))];
-        const queries = (!hasArabic && recentContext) ? baseQueries.concat([recentContext]) : baseQueries;
-        const translationFailed = hasArabic && queryText === prompt.slice(0, 2000);
+        // Arabic (translated with the local claude CLI first), long prompts (chunked), mixed short messages (split into
+        // parts) and the conversation as one extra query: tools/recall-turn.mjs, where the measurements behind each step
+        // are kept. Shared with the brain server's POST /recall/turn, so the hook and the mod recall the same way.
+        const prep = prepareQueries(prompt, recentContext, { translate: (t) => translateSync(t, BRAIN) });
+        const { hasArabic, baseQueries, queries, translationFailed } = prep;
+        if (prep.note) denseNote = prep.note;
 
         // ASK THE SERVER FIRST. It holds the index and does the matching, so one round trip
         // returns the ranked answer and every scoring step below is skipped.
@@ -1242,6 +1084,7 @@ try {
         // chunking is pure string work that costs nothing locally, and the Arabic path needs the
         // claude CLI on this machine. The server receives the already-prepared queries.
         if (!translationFailed && !systemEvent) serverRanked = fetchRecallRemote(prompt, queries, BRAIN, baseQueries.length - 1, queries.length > baseQueries.length ? baseQueries.length : -1);
+        if (serverRanked && SERVER_NOTE) denseNote = (denseNote ? denseNote + ' ' : '') + SERVER_NOTE;
         if (!serverRanked && !translationFailed && !systemEvent && holdsMemoriesLocally(BRAIN)) serverRanked = fetchRecallLocal(prompt, queries, BRAIN, baseQueries.length - 1, queries.length > baseQueries.length ? baseQueries.length : -1);
 
         let vecs = [];
@@ -1385,7 +1228,6 @@ try {
     } catch { /* bookkeeping only, never break a turn for it */ }
     // And to the server, so the machine that draws the map sees every machine.
     postPulse(hits, BRAIN);
-    rememberOffered(payload, prompt, hits);
 
     // RESULTS ALERTS, from tools/analytics.mjs on its five minute timer.
     //
@@ -1516,28 +1358,6 @@ try {
         if (u) { ctxTokens = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0); break; }
       }
     }
-    // COMPACTION ANALYTICS: the 10 messages after a compaction (armed by hooks/post-compact.mjs) record the size and
-    // whether the owner had to repeat or correct something; then every unsent row goes to the brain server.
-    const H = join(homedir(), '.claude');
-    const sidSafe = String((payload && payload.session_id) || '').replace(/[^\w-]/g, '');
-    const watchFile = join(H, 'havok-compact-watch', sidSafe + '.json');
-    const logFile = join(H, 'havok-compact-log.jsonl');
-    if (sidSafe && existsSync(watchFile) && !systemEvent) {
-      const w = JSON.parse(readFileSync(watchFile, 'utf8'));
-      const repeat = /you forgot|i told you|i already (said|told)|we already|as i said|again\?|remember (that|what)|tu as oubli|je t.ai (dit|deja)/i.test(prompt);
-      w.turn += 1; w.turnsLeft -= 1;
-      appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), host: hostname(), session: sidSafe, ev: 'after', turn: w.turn, ctx: ctxTokens, repeat }) + '\n');
-      if (w.turnsLeft > 0) writeFileSync(watchFile, JSON.stringify(w)); else unlinkSync(watchFile);
-    }
-    if (existsSync(logFile)) {
-      const sentFile = join(H, 'havok-compact-log.sent');
-      const lines = readFileSync(logFile, 'utf8').split('\n').filter(Boolean);
-      let sent = 0; try { sent = Number(readFileSync(sentFile, 'utf8')) || 0; } catch { /* none sent yet */ }
-      if (lines.length > sent) {
-        postJson('/compaction-log', { host: hostname(), rows: lines.slice(sent, sent + 50).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) }, BRAIN);
-        writeFileSync(sentFile, String(Math.min(lines.length, sent + 50)));
-      }
-    }
     if (SMART_COMPACTION && ctxTokens >= COMPACT_FROM) {
       const cli = join(BRAIN, 'tools', 'compact-approve.mjs').replace(/\\/g, '/');
       out.push('', 'CONTEXT IS AT ' + Math.round(ctxTokens / 1000) + ',000 TOKENS (compaction is considered from ' + COMPACT_FROM / 1000 + ',000). You judge whether this conversation should be compacted: not while a long piece of work is under way, yes at a natural break. If you think it should, ask the owner in one line, in the word "compacting", and wait; never compact without his yes, and no reply means he is away. On his yes: settle anything learned into the brain, run node "' + cli + '", then write your compaction brief with the Write tool to ~/.claude/havok-compact-brief/<session id>.md, never as a chat message (the owner: keep it out of the chat to save tokens) (what you are working on and its exact state; what you still need exactly: his instructions and decisions in his words with their dates and what each answered, numbers with what they measured, paths, ids, amounts, open questions, ways of working he set; what can go: finished work already saved and where, old tool output, dead ends), then end with a two-line reply; the compaction starts on the next request.');
@@ -1554,6 +1374,7 @@ try {
       if (note) out.push('', note);
     }
   } catch { /* an update notice is never a reason to lose the turn */ }
+  if (DEADLINE_HIT) out.push('', 'brain unreachable, recall skipped (no answer within ' + Math.round(HOOK_LIMIT_MS / 1000) + ' s)');
   ok(out.join('\n'));
 } catch (e) {
   // Failing silent here was wrong, and it is the worst failure this file can have.

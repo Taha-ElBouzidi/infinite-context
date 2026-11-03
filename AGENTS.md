@@ -23,13 +23,26 @@ If Node is missing, stop and tell the person. Do not install it without asking.
 
 ## Steps
 
-**1. Initialise the brain.** From the repository root:
+**1. Ask the person's plan, then initialise the brain.** Ask one question first: which plan they pay
+for. It sets how much you may spend on their behalf:
+
+| plan | for | what it allows |
+|---|---|---|
+| `small` | a plan with tight limits, about 20 dollars a month, or when they are not sure | no helper agent and no background task unless the person asks; small or balanced models and low effort for helpers |
+| `standard` | a middle plan, about 100 dollars a month | a helper on your own only for a large task with independent parts, at most two at a time |
+| `large` | a top plan, about 200 dollars a month or more | helpers in the background and in parallel when a task splits, no more than the task needs |
+
+The prices are approximate, a guide to the size of the plan rather than an exact match: what counts
+is how tight the person's usage limits are. When in doubt, choose the smaller plan.
+
+From the repository root, with their answer (`small` when they do not answer):
 
 ```
-node tools/init.mjs
+node tools/init.mjs --plan small
 ```
 
-Verify: the output contains `rules now active : 8` and `semantic recall  : ON`. If rules say 0, stop; the index did not build. If semantic says OFF, `npm install` failed: tell the person, then continue, keyword recall still works.
+Verify: the output contains `rules now active : 8`, `plan             : small` (or the plan they
+chose) and `semantic recall  : ON`. If rules say 0, stop; the index did not build. If semantic says OFF, `npm install` failed: tell the person, then continue, keyword recall still works.
 
 **2. Wire it into Claude Code.**
 
@@ -54,18 +67,29 @@ The hook starts the local embedder on its own when it is not running; the first 
 reboot may be keyword-only while it warms up, and the hook says so in your context when that
 happens. Nothing to do here unless step 1 reported `semantic recall  : OFF`.
 
-**5. Keep one memory, not two.** Claude Code has its own built-in memory, a `MEMORY.md` and notes
-under `~/.claude/projects/<project>/memory/`. It cannot be switched off. If both stores hold facts
-they drift apart without anyone noticing, and one of them ends up confidently wrong. In the
-maintainer's own setup a local copy held 40 files, 35 of them also in the brain, and 31 of those
-had diverged. A fact stated as true for over a month was wrong in one store and right in the other.
+**5. Keep one memory, not two: turn off Claude Code's auto memory.** Claude Code has its own
+built-in memory (auto memory), a `MEMORY.md` and notes under `~/.claude/projects/<project>/memory/`
+that it writes on its own. If both stores hold facts they drift apart without anyone noticing, and
+one of them ends up confidently wrong. In the maintainer's own setup a local copy held 40 files, 35
+of them also in the brain, and 31 of those had diverged. A fact stated as true for over a month was
+wrong in one store and right in the other. So this repository is the only memory, and the built-in
+one is switched off.
 
-So this repository is the only place facts are written, and the built-in memory becomes a pointer:
+Tell the person in one or two sentences what you are about to do and why, then:
 
 1. Look at what the built-in memory already holds. Copy the folder somewhere safe first.
-2. Move every fact worth keeping into `memory/` here as its own file, in the format above. If the
+2. Move every fact worth keeping into `memory/` here as its own file, in the format below. If the
    same fact is in both, keep the newer one after checking it is still true.
-3. Replace the built-in `MEMORY.md` with a short pointer, and leave no other notes beside it:
+3. Turn auto memory off. Back up `~/.claude/settings.json`, then add this key to it and keep every
+   other setting as it is (if the file does not exist, create it holding only this key):
+
+   ```
+   "autoMemoryEnabled": false
+   ```
+
+   It takes effect from the next session.
+4. Replace the built-in `MEMORY.md` with a short pointer, and leave no other notes beside it, so a
+   session that still reads it finds the way here:
 
    ```
    This local memory is intentionally empty. It is not the source of truth.
@@ -74,11 +98,13 @@ So this repository is the only place facts are written, and the built-in memory 
    Do not write memories here.
    ```
 
-4. From now on write new facts here only, never to both. Do not "save to both so they agree": two
+5. From now on write new facts here only, never to both. Do not "save to both so they agree": two
    writes are the thing that makes them disagree.
 
-Verify: the built-in `MEMORY.md` is only the pointer, and `ls <built-in memory folder>` shows
-nothing else. Tell the person you did this, because it changes where their notes live.
+Verify: `~/.claude/settings.json` still parses and holds `"autoMemoryEnabled": false`, the built-in
+`MEMORY.md` is only the pointer, and `ls <built-in memory folder>` shows nothing else. From the next
+session your context no longer has an auto memory section naming that folder. Tell the person you
+did this, because it changes where their notes live. Setting the key back to `true` undoes it.
 
 ## How to use it once installed
 
@@ -108,6 +134,11 @@ nothing else. Tell the person you did this, because it changes where their notes
 
   Then run `node tools/build-index.mjs`. The description is the only thing indexed.
 - **A rule is a memory with a `rule:` line** in its frontmatter. It is injected on every turn.
+- **The plan line comes with every turn.** A line starting `PLAN:` says how many helpers you may start
+  on your own, which models and effort to use, and whether background work is allowed. Follow it before
+  any rule or method that says to split work into helpers. The setting is `"plan"` in `brain.json`,
+  which stays on this machine; `node tools/plan.mjs` shows it and `node tools/plan.mjs standard`
+  changes it, from the next message. An install with no setting counts as `small`.
 - **Link memories** with `[[slug]]`. A memory with no links in or out fails `verify.mjs`.
 - **If recall is unavailable, say so** in your first sentence. Degraded memory that announces
   itself is recoverable. Silent degradation is answering from nothing while sounding sure.
@@ -151,6 +182,7 @@ expected.
 | a memory you wrote is never recalled | vague description | rewrite the description in the person's words |
 | `verify.mjs` fails on reflection | orphan memory or broken `[[link]]` | link it, or fix the slug |
 | `semantic recall missed this turn` | the note says why: the brain server busy or down, or the local embed server not running | step 4 if it says the embed server is not running, otherwise ignore, keyword still works |
-| you find the same fact in the built-in memory and here, and they differ | two stores were both being written | step 5: keep the newer true one here, empty the built-in one to the pointer |
+| you start helper agents or background tasks the person did not ask for, and their usage limit runs out fast | the plan is larger than the one they pay for, or this install predates the plan setting | `node tools/plan.mjs small` (it also rewords the old seed rule about helpers if it is still unchanged) |
+| you find the same fact in the built-in memory and here, and they differ, or new notes keep appearing under `~/.claude/projects/<project>/memory/` | Claude Code's auto memory is still on, so two stores are being written | step 5: set `"autoMemoryEnabled": false` in `~/.claude/settings.json`, keep the newer true fact here, empty the built-in one to the pointer, start a new session |
 | `INFINITE CONTEXT UPDATE: version X is out ... was not installed automatically` | an engine file the release also changes was edited here, or this clone has commits of its own | the line gives the reason and the command; with the person's yes, put the change aside (`git stash`) or merge by hand, then `node tools/update.mjs` |
 | `INFINITE CONTEXT UPDATE: ... went back to` | verify failed after the update, so it rolled back | `node tools/update.mjs` runs it again and prints why; report it upstream if it repeats |

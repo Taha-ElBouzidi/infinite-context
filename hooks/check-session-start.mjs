@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, rmSyn
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname } from 'node:os';
-import { mergeSharedSettings, wireAntigravity, wantsGitHooks } from '../tools/session-setup.mjs';
+import { mergeSharedSettings, wireAntigravity, wantsGitHooks, ensurePreTurnHook, verifyWithRetry, ensureGlobalGitHooks } from '../tools/session-setup.mjs';
 
 // ONE brain per machine, resolved, never assumed.
 //
@@ -67,14 +67,15 @@ const noLocalBrain = localMemories === 0 || (isPluginCopy(BRAIN) && !existsSync(
 
 const LF = String.fromCharCode(10);
 function runIn(cwd, cmd, ms) {
+  const t0 = Date.now();
   try {
     const out = execSync(cmd, { cwd, encoding: 'utf8', timeout: ms, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    return { ok: true, out, err: '', stderr: '' };
+    return { ok: true, out, err: '', stderr: '', ms: Date.now() - t0 };
   } catch (e) {
     // The first stderr line is what tells a wedged pull apart from a dead network in the banner.
     const stderr = String((e && e.stderr) || '').trim();
     const err = stderr.split(LF).map((l) => l.trim()).filter(Boolean)[0] || '';
-    return { ok: false, out: '', err, stderr };
+    return { ok: false, out: '', err, stderr, ms: Date.now() - t0, timedOut: !!(e && (e.code === 'ETIMEDOUT' || e.signal === 'SIGTERM')) };
   }
 }
 const tryRun = (cmd, ms) => runIn(BRAIN, cmd, ms);
@@ -106,20 +107,10 @@ if (BRAIN !== HERE && isBrainRepo(HERE)) {
 //
 // Strictly idempotent, touches nothing but this one key, and silent on any failure. It rewrites
 // only when the command actually differs, so a moved brain self-heals without churning the file.
-try {
-  const settingsPath = resolve(homedir(), '.claude', 'settings.json');
-  const desired = `node "${join(BRAIN, 'hooks', 'pre-turn.mjs').replace(/\\/g, '/')}"`;
-  const raw = readFileSync(settingsPath, 'utf8');
-  const s = JSON.parse(raw);
-  const current = s.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.command;
-  if (current !== desired) {
-    if (!existsSync(settingsPath + '.bak-preturn')) writeFileSync(settingsPath + '.bak-preturn', raw, 'utf8');
-    s.hooks = s.hooks || {};
-    s.hooks.UserPromptSubmit = [{ hooks: [{ type: 'command', command: desired, timeout: 10 }] }];
-    writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf8');
-    notes.push('Installed the per-turn recall and reply-discipline hook into ~/.claude/settings.json. Settings hooks reload live, so it applies to sessions already running, not just new ones.');
-  }
-} catch { /* the brain still works without it, it just loses the per-turn nudge */ }
+// Skipped where the mod gives recall (tools/session-setup.mjs ensurePreTurnHook, tests in
+// tools/preturn-hook.test.mjs).
+// Since 2026-11-03 the plugin registers it (hooks/hooks.json, --from-plugin); ensurePreTurnHook writes nothing now.
+{ const note = ensurePreTurnHook({ brain: BRAIN, home: homedir() }); if (note) notes.push(note); }
 
 // No Claude attribution in commits or pull requests, on every machine of an owner who asked for it
 // (brain.json "noClaudeAttribution": true). The owner, 2026-09-26: "Generated with Claude Code. This
@@ -558,6 +549,12 @@ if (!hp.ok || hp.out !== 'hooks/git') {
   if (set.ok) notes.push('Armed the brain git pre-commit gate on this machine (core.hooksPath).');
 }
 
+// The machine-wide git checks (secret scan, commit message) for every other repository: tools/session-setup.mjs.
+{
+  const note = ensureGlobalGitHooks({ hooksDir: join(dirname(fileURLToPath(import.meta.url))), home: homedir(), git: (args) => { try { return execFileSync('git', args, { encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; } } });
+  if (note) notes.push(note);
+}
+
 // Methods are memories, not skills. The owner, 2026-09-26: "skills shouldn't be triggered like a skill
 // that you follow point for point, they should be memory on how to do stuff, indirectly." Plugin 0.3.13
 // installed the kit as skills for a few hours; this removes any folder that installer wrote (it left a
@@ -578,11 +575,14 @@ try {
 // The gate guards commits. A push-disabled machine never commits to the shared brain (its writes go
 // through POST /memory and are gated on the server), so running verify here only cries wolf:
 // no local model, an index repaired from the server, no brain.json. Skip it, say why.
-const vr = serverOnly ? { ok: true, out: '' } : tryRun('node "' + BRAIN.split(String.fromCharCode(92)).join('/') + '/tools/verify.mjs" --quiet', 25000);
+// 40 s: verify takes about 25 s on the host (2026-11-03) and the mod gives this job two minutes (brainjobs.ts startJobs).
+// A failure is checked once more after a short wait: a verify run during a push or an index rebuild is not a broken
+// brain (verifyWithRetry, tools/verify-retry.test.mjs).
+const vr = serverOnly ? { ok: true, out: '' } : verifyWithRetry(() => tryRun('node "' + BRAIN.split(String.fromCharCode(92)).join('/') + '/tools/verify.mjs" --quiet', 40000), (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
 const prLine = serverOnly
   ? 'Gate: not run here, this machine never commits to the shared brain; verify runs on the brain host and on every server write.'
-  : vr.ok ? 'Brain verify PASSED.' : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
-if (!vr.ok) {
+  : vr.ok ? 'Brain verify PASSED.' : vr.timedOut ? 'Brain verify did not finish in time here, so it was not judged (the brain is not known to be broken). To check: node tools/verify.mjs' : 'WARNING: brain verify FAILED. The shared brain is broken for every machine. Run: node tools/verify.mjs';
+if (!vr.ok && !vr.timedOut) {
   notes.push('Brain verification is failing. Fix before making other changes:');
   notes.push('  node tools/verify.mjs');
   notes.push('A red gate usually means a hook or tool does not parse, the generated index');
@@ -622,14 +622,31 @@ function readTier(rel, cap) {
   } catch { return null; }
 }
 
-const reflex = readTier('REFLEX.md', 16000);
-let router = readTier('memory/MEMORY.md', 16000);
-let hot = readTier('index/HOT.md', 16000);
+// The hook input, read once here: the session id decides what is injected below, and later parts read it too.
+// Keep-warm no longer asks for a CronCreate timer here: the mod keeps a session warm by itself (keepwarm-rules.mjs,
+// the owner 2026-11-02).
+try { globalThis.__havokEv = readFileSync(0, 'utf8') || '{}'; } catch { /* no input */ }
+
+// THE MOD DELIVERED THE GLOBAL LAYER (context release, 2026-11-02). The mod writes
+// ~/.claude/havok-mod/layers-live/<session> at session.start, before this hook runs, when it puts the global context in
+// the system prompt. That context carries the rules, the memory format and the save commands, so REFLEX, the router, HOT
+// and the memory instructions here would be the same rules a second time. Only the sync line, the verify line and the
+// notes stay. A file and not an environment variable, and per session, so a machine on this brain with an older mod (no
+// marker) keeps everything: no agent is ever left with no rules (hooks/check-session-start.test.mjs).
+let layersLive = false;
+try {
+  const sid = String(JSON.parse(globalThis.__havokEv || '{}').session_id || '');
+  if (/^[A-Za-z0-9_-]{6,80}$/.test(sid)) layersLive = existsSync(resolve(homedir(), '.claude', 'havok-mod', 'layers-live', sid));
+} catch { /* no usable input: keep everything */ }
+
+const reflex = layersLive ? null : readTier('REFLEX.md', 16000);
+let router = layersLive ? null : readTier('memory/MEMORY.md', 16000);
+let hot = layersLive ? null : readTier('index/HOT.md', 16000);
 
 // Where there are no local files, the tiers are not missing, they are somewhere else. Fetch the
 // router and HOT from the same server recall already reads, and never write them to disk: holding
 // no copy is the whole point. REFLEX.md needs no fetch, it arrives with the code mirror.
-if (noLocalBrain) {
+if (noLocalBrain && !layersLive) {
   if (!router) {
     try { router = (JSON.parse(serverGet(BRAIN, '/memory/MEMORY')).content || '').trim().slice(0, 16000) || null; }
     catch { router = null; }
@@ -642,7 +659,9 @@ const parts = [
 ];
 if (notes.length) parts.push(notes.join('\n'));
 
-if (reflex || router || hot) {
+if (layersLive) {
+  // The global layer, from the mod, carries what used to follow here.
+} else if (reflex || router || hot) {
   parts.push(
     '',
     'The brain below IS your memory. It is injected in full, so do not re-read these files.',
@@ -694,9 +713,6 @@ if (reflex || router || hot) {
   parts.push('WARNING: could not read REFLEX.md or memory/MEMORY.md. The brain is NOT loaded into this session. Read them manually from ' + BRAIN.replace(/\\/g, '/'));
 }
 
-// The hook input, kept for the parts below. Keep-warm no longer asks for a CronCreate timer here: the mod keeps a
-// session warm by itself (keepwarm-rules.mjs, the owner 2026-11-02).
-try { globalThis.__havokEv = readFileSync(0, 'utf8') || '{}'; } catch { /* no input */ }
 
 // SMART COMPACT, part 3 (The owner, 2026-10-06: "right after, the brain re-injects the open items"). A compact replaces the
 // conversation with a summary; this puts the live to-do list and the way back to exact facts in front of the agent again.
@@ -713,7 +729,7 @@ try {
 // are built by Claude experts, and direct them to our memory system ... and turn off the Claude memory system").
 // autoMemoryEnabled is false in hooks/claude-settings.json, which removes Claude's version; this puts ours in its place
 // on every start, resume and compaction, with the commands that work on this machine.
-try {
+if (!layersLive) try {
   const fwd = (p) => p.replace(/\\/g, '/');
   const t = fwd(resolve(HERE, 'tools'));
   const local = !noLocalBrain;

@@ -13,8 +13,10 @@
 // operating rules at all. That was found by actually installing a clean export on 2026-09-05, not
 // by reading the code. The eight below are the universal ones, with nothing personal in them.
 //
-//   node tools/init.mjs              set up an empty brain here
-//   node tools/init.mjs --force      re-seed even if memories already exist
+//   node tools/init.mjs                         set up an empty brain here
+//   node tools/init.mjs --plan small            the same, and say how much the assistant may spend:
+//                                               small (the default), standard or large (tools/plan.mjs)
+//   node tools/init.mjs --force                 re-seed even if memories already exist
 //
 // It does NOT touch git, does NOT reach the network, and does NOT install the Claude Code hook.
 // That last one is a separate, reversible step: node tools/install-hook.mjs
@@ -23,10 +25,18 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
+import { SUB_AGENT_RULE, SUB_AGENT_SHORT } from '../hooks/plan-rules.mjs';
+import { setPlan, PLANS, DEFAULT_PLAN } from './plan.mjs';
 
 const BRAIN = process.env.HAVOK_BRAIN || resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FORCE = process.argv.includes('--force');
 const NO_SEMANTIC = process.argv.includes('--no-semantic');
+const planAt = process.argv.indexOf('--plan');
+const PLAN = planAt > -1 ? String(process.argv[planAt + 1] || '').toLowerCase() : DEFAULT_PLAN;
+if (!PLANS.includes(PLAN)) {
+  process.stdout.write('--plan takes one of: ' + PLANS.join(', ') + String.fromCharCode(10));
+  process.exit(2);
+}
 const NL = String.fromCharCode(10);
 const say = (s) => process.stdout.write(s + NL);
 
@@ -143,12 +153,16 @@ const SEEDS = [
   },
   {
     slug: 'feedback_sub_agents_get_a_ready_brief',
-    name: 'Sub-agents for independent work, each with a complete brief',
+    name: 'Sub-agents only as the plan allows, each with a complete brief',
     order: 70,
-    short: 'SPLIT INDEPENDENT WORK INTO SUB-AGENTS, EACH WITH A BRIEF THAT STANDS ALONE (goal, facts, exact paths, limits, output, self-check). Check what they return.',
-    rule: 'USE SUB-AGENTS FOR INDEPENDENT WORK, AND GIVE EACH ONE A COMPLETE BRIEF. When a task splits into parts that do not depend on each other, run them as sub-agents in the background and in parallel, so the conversation is never blocked. A sub-agent does not get memory recall and does not see this conversation, so its brief must stand alone: the goal, the facts it needs (relevant memories copied in), exact paths, what it must not do, the output format, and how to check its own result. Check what every sub-agent returns before relying on it.',
-    desc: 'Sub agents, run agents in parallel, background agents, delegate work, how to brief a sub agent.',
+    // Worded so the plan setting decides (hooks/plan-rules.mjs). Until 0.4.89 this rule told every install to run
+    // sub-agents in the background and in parallel whenever a task split into parts, which spends a small plan fast.
+    short: SUB_AGENT_SHORT,
+    rule: SUB_AGENT_RULE,
+    desc: 'Sub agents, helpers, run agents in parallel, background agents, delegate work, how many helpers my plan allows, how to brief a sub agent.',
     body: [
+      'How many helpers may start, and when, depends on the plan set at install (small, standard or large,',
+      'node tools/plan.mjs). On a small plan none start unless the person asks.',
       'The brief: goal and what done looks like; the facts, with memories copied in; exact file paths or',
       'URLs; limits (no edits, no sending, a size or time limit); the output format; a self-check.',
       'The main assistant recalls; sub-agents only receive what the brief gives them.',
@@ -230,6 +244,13 @@ if (existsSync(kitMem)) {
     + (r.waiting.length ? '; ' + r.waiting.length + ' you changed were kept, their new versions wait in kit-updates/' : ''));
 }
 
+// ---- the plan: how much the assistant may spend ------------------------------------------------
+// Small unless --plan says otherwise, and a plan set earlier is kept when --plan is not given (a re-seed with --force
+// must not quietly lower a large plan). hooks/plan-rules.mjs has what each plan allows.
+let planSet = PLAN;
+try { planSet = setPlan(BRAIN, PLAN, { onlyIfUnset: planAt === -1 }).plan; }
+catch (e) { say('plan not set: ' + e.message + '. Set it later with node tools/plan.mjs ' + PLANS.join(' | ')); }
+
 // ---- semantic recall, ON by default ------------------------------------------------------------
 // Measured on a fresh clone, 2026-09-05: npm install 31s and 284MB, first build 16s including the
 // model download, and then a paraphrase with no word in common finds the right memory. Without
@@ -267,6 +288,7 @@ let rules = 0;
 try { rules = (JSON.parse(readFileSync(join(BRAIN, 'index', 'rules.json'), 'utf8')).rules || []).length; } catch { /* none */ }
 say('');
 say('rules now active : ' + rules + (rules ? '' : '   <-- still zero, something is wrong'));
+say('plan             : ' + planSet + '   (helpers, models and background work sized to it; change with node tools/plan.mjs)');
 say('brain            : ' + BRAIN);
 say('');
 say('Next, and it is the step that actually switches memory on:');

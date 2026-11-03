@@ -22,6 +22,7 @@ import { dirname, resolve, join } from 'node:path';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { whoAmI } from './provenance.mjs';
+import { reportFailure } from './brain-recover.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const NL = String.fromCharCode(10);
@@ -151,7 +152,11 @@ function call(path, { method = 'GET', body = null, timeoutSec = 20 } = {}) {
       encoding: 'utf8', timeout: (timeoutSec + 2) * 1000, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true,
     });
     return JSON.parse(out || '{}');
-  } catch { return null; } finally {
+  } catch (e) {
+    // No answer at all (refused, or past max-time): the event brain-recover acts on, on the brain host only.
+    if (!(e instanceof SyntaxError)) reportFailure('brain', 'brain-client ' + path.split('/').slice(0, 2).join('/') + ' got no answer');
+    return null;
+  } finally {
     if (bodyFile) { try { unlinkSync(bodyFile); } catch { /* already gone */ } }
   }
 }

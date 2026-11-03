@@ -5,9 +5,9 @@ type: reference
 metadata:
   type: reference
   asserted: 2026-09-26
-  updated: 2026-09-26
-  kit_version: 1
-  kit_hash: b72d7bc5f96e1f10
+  updated: 2026-11-03
+  kit_version: 2
+  kit_hash: 9bc9bec991700c5a
 ---
 
 # How to research with verified sources
@@ -28,7 +28,7 @@ Check memory first: the answer, or a constraint that changes the question, may a
 | A number such as a statistic or a financial figure | The authoritative dataset, never a blog quoting it secondhand |
 | Opinions, real-world experience, what breaks in practice | Forums and issue trackers, clearly labelled as opinion |
 
-For a quick fact, a direct search is enough. For a wide question, split it into independent parts and give each part to its own sub-agent, following [[reference_how_to_brief_sub_agents_and_pick_models]], each with its own narrow question rather than one agent trying to cover everything at once.
+For a quick fact, a direct search is enough. For a wide question, split it into independent parts and, when the plan allows helpers (on a small plan only when the person asks), give each part to its own sub-agent, following [[reference_how_to_brief_sub_agents_and_pick_models]], each with its own narrow question rather than one agent trying to cover everything at once.
 
 ## Checking what was found
 

@@ -75,3 +75,75 @@ export function wireAntigravity({ here, home }) {
 // core.hooksPath pointing at a folder that does not exist switches off every git hook of that clone, the user's own
 // included; the engine export ships no hooks/git, so the gate is armed only where it exists.
 export const wantsGitHooks = (brain) => existsSync(join(brain, 'hooks', 'git', 'pre-commit'));
+
+// The per-turn recall hook (hooks/pre-turn.mjs) registered in ~/.claude/settings.json, where hooks reload live in
+// sessions already running. Returns a note when it wrote the file, '' otherwise. Strictly idempotent, touches only
+// this one key, silent on failure. Moved out of check-session-start.mjs so it can be tested.
+// Since 2026-11-03 the plugin registers the hook (hooks/hooks.json runs pre-turn.mjs --from-plugin) and it stands down
+// where a hand-written entry still exists, so this writes nothing; the install step removes old entries once every
+// live session runs the new plugin. Kept so older callers still load.
+export function ensurePreTurnHook({ brain, home }) {
+  if (brain || home) return '';
+  try {
+    const settingsPath = resolve(home, '.claude', 'settings.json');
+    const desired = `node "${join(brain, 'hooks', 'pre-turn.mjs').replace(/\\/g, '/')}"`;
+    const raw = readFileSync(settingsPath, 'utf8');
+    const s = JSON.parse(raw);
+    const current = s.hooks?.UserPromptSubmit?.[0]?.hooks?.[0]?.command;
+    if (current === desired) return '';
+    // The mod gives recall on this machine once its install step removed the hook (machine.json present and
+    // keepPreTurn not true): putting the hook back would double the recall text. Never removes it by itself
+    // (HAVOK, 2026-11-03); an unreadable machine.json counts as no mod, so the hook still gives recall.
+    let machine = null;
+    try { machine = JSON.parse(readFileSync(resolve(home, '.claude', 'havok-mod', 'machine.json'), 'utf8')); } catch { machine = null; }
+    if (machine && typeof machine === 'object' && !Array.isArray(machine) && machine.keepPreTurn !== true) return '';
+    if (!existsSync(settingsPath + '.bak-preturn')) writeFileSync(settingsPath + '.bak-preturn', raw, 'utf8');
+    s.hooks = s.hooks || {};
+    s.hooks.UserPromptSubmit = [{ hooks: [{ type: 'command', command: desired, timeout: 10 }] }];
+    writeFileSync(settingsPath, JSON.stringify(s, null, 2), 'utf8');
+    return 'Installed the per-turn recall and reply-discipline hook into ~/.claude/settings.json. Settings hooks reload live, so it applies to sessions already running, not just new ones.';
+  } catch { return ''; }
+}
+
+// The session start's brain verify. A run that ran out of time is reported as not finished, never as a failure (verify
+// takes about 25 s on the host; HAVOK, 2026-11-03). A fast failure is checked once more after VERIFY_RETRY_MS: a verify
+// run during a push or an index rebuild passes a moment later. A slow failure is not retried, so the whole session
+// start still fits the dispatcher's 30 s. run() returns { ok, out, timedOut, ms }; sleep(ms) blocks. Tests in
+// tools/verify-retry.test.mjs.
+export const VERIFY_RETRY_MS = 5000;
+export const VERIFY_RETRY_IF_UNDER_MS = 10000;
+export function verifyWithRetry(run, sleep) {
+  const first = run() || { ok: false, out: '' };
+  if (first.ok || first.timedOut) return first;
+  if (!(Number(first.ms) < VERIFY_RETRY_IF_UNDER_MS)) return first;
+  sleep(VERIFY_RETRY_MS);
+  const second = run() || { ok: false, out: '' };
+  return { ...second, retried: true };
+}
+
+// MACHINE-WIDE GIT CHECKS (HAVOK, 2026-11-03): the secret scan and the commit message check also run as git hooks, so a
+// commit is checked even when no Claude hook is armed. hooks/git-global and the two rule files are copied to a stable
+// folder (~/.claude/havok-git-hooks, the same path whatever plugin version runs) and git's global core.hooksPath points
+// there. A global hooksPath set to anything else is left alone and reported. Returns a note, or ''. Never throws.
+export const GIT_HOOK_FILES = [['git-global/pre-commit', 'pre-commit'], ['git-global/commit-msg', 'commit-msg'], ['git-global/git-secret-scan.mjs', 'git-secret-scan.mjs'], ['git-global/git-commit-msg.mjs', 'git-commit-msg.mjs'], ['secret-rules.mjs', 'secret-rules.mjs'], ['commit-message-rules.mjs', 'commit-message-rules.mjs']];
+export function ensureGlobalGitHooks({ hooksDir, home, git }) {
+  try {
+    const dest = resolve(home, '.claude', 'havok-git-hooks');
+    mkdirSync(dest, { recursive: true });
+    let copied = 0;
+    for (const [from, to] of GIT_HOOK_FILES) {
+      const src = join(hooksDir, from);
+      if (!existsSync(src)) return '';
+      const text = readFileSync(src, 'utf8').replace(/\r\n/g, '\n');
+      const target = join(dest, to);
+      let old = null;
+      try { old = readFileSync(target, 'utf8'); } catch { /* new */ }
+      if (old !== text) { writeFileSync(target, text, { encoding: 'utf8', mode: 0o755 }); copied++; }
+    }
+    const want = dest.replace(/\\/g, '/');
+    const now = String(git(['config', '--global', '--get', 'core.hooksPath']) || '').trim().replace(/\\/g, '/');
+    if (now && now !== want) return 'Git global core.hooksPath is ' + now + ', not the Havok git checks (' + want + '); left as it is.';
+    if (!now) { git(['config', '--global', 'core.hooksPath', want]); return 'Armed the machine-wide git checks (secret scan, commit message) at ' + want + '.'; }
+    return copied ? 'Updated the machine-wide git checks at ' + want + '.' : '';
+  } catch { return ''; }
+}

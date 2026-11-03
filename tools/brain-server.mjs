@@ -45,11 +45,18 @@ import { vaultAccess, mayReplace, ownEntries } from './vault-access.mjs';
 import { makeRecall, SHORT_FOLLOW_UP } from './recall-core.mjs';
 import { watchTailnet } from './tailnet-watch.mjs';
 import { servedLayerFiles } from './layers-dist.mjs';
-import { accept as acceptAnalytics, MAX_BODY_CHARS as ANALYTICS_MAX_BODY } from './analytics-store.mjs';
+import { layerVersions, readLayer } from './layer-host.mjs';
+import { releaseSummary, releaseManifest, releaseZip, releasePath, VERSION_RE } from './release-host.mjs';
+import { makeRecallTurn, translateSync } from './recall-turn.mjs';
 import { record as recordProvenance } from './provenance.mjs';
+import { makeGuardedEmbedder } from './embed-guard.mjs';
 
 const BRAIN = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.HAVOK_SERVER_PORT || 8478);
+// The layer host folder sits beside the brain on the host (D:/dev/Havok/LAYERS), its own git repo, never inside this one.
+const LAYERS_DIR = process.env.HAVOK_LAYERS_DIR || resolve(BRAIN, '..', 'LAYERS');
+// The release host folder (task 18): the releases HAVOK published with tools/release-publish.mjs, also outside the repo.
+const RELEASES_DIR = process.env.HAVOK_RELEASES_DIR || resolve(BRAIN, '..', 'RELEASES');
 const PUBLIC = process.argv.includes('--public');
 // WHERE THIS PROCESS KEEPS ITS PRIVATE FILES.
 //
@@ -296,13 +303,25 @@ const json = (res, code, body) => {
 
 // The embed model is loaded lazily and once. Loading it at startup would make the server take
 // 70 seconds to answer /health, and most requests never touch it.
-let embedFn = null;
+//
+// ON ITS OWN THREAD, WITH A LIMIT ON EVERY CALL (2026-11-02). The model used to run here, on the thread that answers
+// every request: onnxruntime-node runs it synchronously, so when SERVER's CPU was saturated one embedding took 8.9 s
+// and recall stopped answering for every agent, /health included, until a restart by hand. Now a call that gives no
+// answer within EMBED_TIMEOUT_MS fails, recall falls back to keyword only and says so (tools/embed-guard.mjs).
+// 4 s: a warm call is 28 to 58 ms and a paged-out one 684 ms (measured 2026-08-22), and the hook gives /recall 9 s.
+const EMBED_TIMEOUT_MS = Number(process.env.HAVOK_EMBED_TIMEOUT_MS || 4000);
+// The first load has been measured at about 70 s; past twice that the worker is ended and the next call tries again.
+const EMBED_LOAD_TIMEOUT_MS = Number(process.env.HAVOK_EMBED_LOAD_TIMEOUT_MS || 180000);
+let embedder = null;
 async function getEmbedder() {
-  if (embedFn) return embedFn;
-  const { pipeline, env } = await import('@xenova/transformers');
-  env.allowLocalModels = false;
-  embedFn = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  return embedFn;
+  if (!embedder) {
+    embedder = makeGuardedEmbedder({
+      model: 'Xenova/all-MiniLM-L6-v2', module: process.env.HAVOK_EMBED_MODULE || null,
+      timeoutMs: EMBED_TIMEOUT_MS, loadTimeoutMs: EMBED_LOAD_TIMEOUT_MS,
+      onEvent: (what) => audit('EMBED-' + what.toUpperCase() + ' limit ' + (what === 'load-timeout' ? EMBED_LOAD_TIMEOUT_MS : EMBED_TIMEOUT_MS) + 'ms'),
+    });
+  }
+  return embedder.embed;
 }
 
 // ---- SERVER-SIDE RECALL -----------------------------------------------------------------
@@ -324,7 +343,10 @@ async function getEmbedder() {
 // previously could not. The audit line below therefore records counts only, never the prompt text
 // and never the memory names.
 // The recall itself lives in tools/recall-core.mjs, shared with a local install (2026-09-26).
+const KEYWORD_ONLY_NOTE = 'NOTE: semantic recall missed this turn, so the recall below is keyword only and a paraphrase may not match. Why: the brain server ';
 const recall = makeRecall({ brain: BRAIN, getEmbedder, indexVersion });
+// Turn recall for the mod (context release, 2026-11-02): the hook's query building and its per-session state, here.
+const recallTurn = makeRecallTurn({ brain: BRAIN, recall, layersDir: LAYERS_DIR, releasesDir: RELEASES_DIR, stateDir: join(BRAIN, '.recall-turn-state'), translate: (text) => translateSync(text, BRAIN), shortFollowUp: SHORT_FOLLOW_UP });
 
 const handler = async (req, res) => {
   const ip = req.socket.remoteAddress || '?';
@@ -529,6 +551,47 @@ const handler = async (req, res) => {
         error: 'retired: the vault no longer has a shared passphrase',
         do: 'on the new machine run: node tools/vault.mjs machine-init, then send the PUBLIC key here and run: node tools/vault.mjs machine-add <NAME> <key> && node tools/vault.mjs grant --all --to <NAME>',
       });
+    }
+
+    // ---- /layers : the context layers HAVOK owns, each with a version (tools/layer-host.mjs) ----
+    // The key is read from the raw request path, never the parsed one: the URL parser folds %2E%2E into a parent
+    // step, which would turn a refused key into a valid one.
+    const rawPath = String(req.url || '').split('?')[0];
+    if (req.method === 'GET' && path === '/layers/versions') {
+      const groups = String(url.searchParams.get('groups') || '').split(',').map((g) => g.trim()).filter(Boolean);
+      // The latest release rides this answer too (task 18); no layer key can be called release (layer-host validKey).
+      const release = releaseSummary(RELEASES_DIR);
+      return json(res, 200, { ...layerVersions(LAYERS_DIR, String(url.searchParams.get('machine') || ''), groups), ...(release ? { release } : {}) });
+    }
+    if (req.method === 'GET' && rawPath.startsWith('/layers/')) {
+      let key = '';
+      try { key = decodeURIComponent(rawPath.slice('/layers/'.length)); } catch { return json(res, 400, { error: 'bad layer key' }); }
+      const r = readLayer(LAYERS_DIR, key);
+      if (r.status !== 200) return json(res, r.status, { error: r.error });
+      const etag = '"' + r.version + '"';
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag }); return res.end(); }
+      res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', etag });
+      return res.end(r.text);
+    }
+
+    // ---- /release : the release HAVOK published (tools/release-host.mjs, task 18) ----
+    // /release/latest and /release/<version> answer the manifest, /release/<version>.zip the zip itself. The version is
+    // matched on the raw path against three plain numbers, so no other path can reach the disk through it.
+    if (req.method === 'GET' && rawPath.startsWith('/release/')) {
+      const rest = rawPath.slice('/release/'.length);
+      if (rest === 'latest') {
+        const s = releaseSummary(RELEASES_DIR);
+        return s ? json(res, 200, releaseManifest(RELEASES_DIR, s.version)) : json(res, 404, { error: 'no release published' });
+      }
+      const p = releasePath(rest);
+      if (!p) return json(res, 400, { error: 'bad release version' });
+      if (!p.zip) { const man = releaseManifest(RELEASES_DIR, p.version); return man ? json(res, 200, man) : json(res, 404, { error: 'no such release' }); }
+      const file = releaseZip(RELEASES_DIR, p.version);
+      if (!file) return json(res, 404, { error: 'no such release' });
+      const buf = readFileSync(file);
+      audit('RELEASE ' + ip + ' ' + caller.name + ' ' + p.version + ' ' + buf.length + 'b');
+      res.writeHead(200, { 'content-type': 'application/zip', 'content-length': buf.length });
+      return res.end(buf);
     }
 
     // ---- /dist : serve the code and the certificate to machines with no GitHub -------------
@@ -982,8 +1045,10 @@ const handler = async (req, res) => {
       const emb = JSON.parse(readFileSync(join(BRAIN, 'index', 'embeddings.json'), 'utf8'));
       const kwd = JSON.parse(readFileSync(join(BRAIN, 'index', 'keywords.json'), 'utf8'));
       const e = await getEmbedder();
-      const vec = async (t) => (await e(t, { pooling: 'mean', normalize: true })).data;
-      const scores = (v) => emb.slugs.map((sl, i) => { let d = 0; const w = emb.vectors[i]; for (let k = 0; k < w.length; k++) d += v[k] * w[k]; return [sl, d]; });
+      // A failed or timed out embedding leaves the keyword matches recall already found, rather than failing the search.
+      let searchDegraded = '';
+      const vec = async (t) => { try { return (await e(t, { pooling: 'mean', normalize: true })).data; } catch (err) { searchDegraded = String(err.message).slice(0, 160); return null; } };
+      const scores = (v) => (!v ? [] : emb.slugs.map((sl, i) => { let d = 0; const w = emb.vectors[i]; for (let k = 0; k < w.length; k++) d += v[k] * w[k]; return [sl, d]; }));
       const keep = new Map();
       for (const n of needs) {
         // Matched by both channels, plus the top 3 of the normal recall whichever channel found them. Only "both" or
@@ -991,6 +1056,7 @@ const handler = async (req, res) => {
         // on 2026-10-23 a search for a research-call convention returned nothing while recall had the right memory
         // first, so an agent used a retired free tier.
         const fused = await recall(n, [n], 5, 0, false, 0, -1);
+        if (fused.degraded) searchDegraded = fused.degraded;
         for (const h of fused) if (h.how === 'both') keep.set(h.slug, { score: 1, how: 'both' });
         for (const h of fused.filter((x) => x.how !== 'linked').slice(0, 3)) if (!keep.has(h.slug)) keep.set(h.slug, { score: 0.5, how: h.how });
         for (const [sl, d] of scores(await vec(n))) if (d >= SEARCH_MIN && (!keep.has(sl) || keep.get(sl).score < d)) keep.set(sl, { score: d, how: keep.get(sl)?.how || 'meaning' });
@@ -1004,7 +1070,34 @@ const handler = async (req, res) => {
         learnedOut.push({ item: l, closest: near });
       }
       audit('SEARCH ' + ip + ' needs=' + needs.length + ' learned=' + learned.length + ' hits=' + memories.length + ' ' + (Date.now() - ts) + 'ms');
-      return json(res, 200, { memories, learned: learnedOut, v: indexVersion().version });
+      return json(res, 200, { memories, learned: learnedOut, v: indexVersion().version, ...(searchDegraded ? { note: KEYWORD_ONLY_NOTE + searchDegraded + '.' } : {}) });
+    }
+
+    // ONE REQUEST PER MESSAGE for the mod (context release, 2026-11-02): body { prompt, previous (the last user
+    // messages, up to 3), session, machine, agent, groups?, bodies? }, answer { memories [{ slug, description, why }],
+    // droppedEarlier, note, layers? }. tools/recall-turn.mjs holds the query building that hooks/pre-turn.mjs did on
+    // each machine, and the per-session list of memories already shown. The pulse line is written here, since the mod
+    // posts none. The audit line counts only, never the prompt or the slugs.
+    if (path === '/recall/turn' && req.method === 'POST') {
+      let tbody = '';
+      for await (const chunk of req) { tbody += chunk; if (tbody.length > 200_000) { req.destroy(); return; } }
+      let tp; try { tp = JSON.parse(tbody || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
+      if (typeof tp.prompt !== 'string' || !tp.prompt.trim()) return json(res, 400, { error: 'prompt required' });
+      tp.previous = (Array.isArray(tp.previous) ? tp.previous : []).filter((x) => typeof x === 'string').slice(-3).map((x) => x.slice(0, 4000));
+      tp.prompt = tp.prompt.slice(0, 20000);
+      tp.machine = String(tp.machine || '').slice(0, 64);
+      const tt = Date.now();
+      const out = await recallTurn(tp);
+      if (out.memories.length) {
+        try {
+          const PULSE = join(BRAIN, '.recall-pulse.jsonl');
+          appendFileSync(PULSE, JSON.stringify({ at: Date.now(), host: tp.machine || caller.name, slugs: out.memories.map((m) => m.slug).slice(0, 20), how: out.memories.map((m) => m.why).slice(0, 20) }) + '\n', 'utf8');
+          const lines = readFileSync(PULSE, 'utf8').split('\n').filter(Boolean);
+          if (lines.length > 800) writeFileSync(PULSE, lines.slice(-600).join('\n') + '\n', 'utf8');
+        } catch { /* bookkeeping only */ }
+      }
+      audit('RECALL-TURN ' + ip + ' ' + caller.name + ' chars=' + tp.prompt.length + ' hits=' + out.memories.length + ' earlier=' + out.memories.filter((m) => m.why === 'earlier').length + ' dropped=' + out.droppedEarlier.length + ' ' + (Date.now() - tt) + 'ms');
+      return json(res, 200, out);
     }
 
     if (path === '/recall' && req.method === 'POST') {
@@ -1030,8 +1123,9 @@ const handler = async (req, res) => {
       const ranked = await recall(prompt, queries, Math.min(Math.max(Number(rp.limit) || 5, 1), 20), bodyChars, rp.limit != null, Math.max(0, Math.min(Number(rp.parts) || 0, 16)), (Number.isInteger(rp.contextIndex) && prompt.trim().length >= SHORT_FOLLOW_UP) ? rp.contextIndex : -1);
       // Counts only. Never the prompt, never the matched slugs.
       audit('RECALL ' + ip + ' q=' + queries.length + ' chars=' + prompt.length
-        + ' hits=' + ranked.length + (bodyChars ? ' bodies=' + bodyChars : '') + ' ' + (Date.now() - tr) + 'ms');
-      return json(res, 200, { ranked, v: indexVersion().version });
+        + ' hits=' + ranked.length + (bodyChars ? ' bodies=' + bodyChars : '') + (ranked.degraded ? ' keyword-only' : '') + ' ' + (Date.now() - tr) + 'ms');
+      // The same words the hook uses when it falls back itself, so an agent reads one kind of note for one kind of loss.
+      return json(res, 200, { ranked, v: indexVersion().version, ...(ranked.degraded ? { note: KEYWORD_ONLY_NOTE + ranked.degraded + '.' } : {}) });
     }
 
     // WHICH MEMORIES A MACHINE ACTUALLY USED, collected centrally.
@@ -1047,70 +1141,6 @@ const handler = async (req, res) => {
     // records slugs and nothing else: no prompt, no answer, no content. A slug is the filename of
     // a memory that is already sitting on this same disk, so writing it next to them adds no
     // exposure. The prompt is what must never be written down, and it still is not.
-    // PROMPT AND THE MEMORIES OPENED FOR IT, for training recall on real use (hooks/pre-turn.mjs,
-    // logPreviousTurn). This is the one exception to "the prompt is never written down" above, agreed by
-    // the owner on 2026-09-28 for a fixed window: outside the dates in usage-collection.json nothing is kept.
-    // The log is untracked and never leaves this machine.
-    // COMPACTION ANALYTICS from every machine (hooks/post-compact.mjs, compact-lock.mjs, pre-turn.mjs): one row per
-    // locked attempt, approval, compaction and each of the 10 messages after it. Kept always, no window. Read with
-    // node tools/compaction-report.mjs.
-    if (path === '/compaction-log' && req.method === 'POST') {
-      let cbody = '';
-      for await (const chunk of req) {
-        cbody += chunk;
-        if (cbody.length > 100_000) { req.destroy(); return; }
-      }
-      let cp; try { cp = JSON.parse(cbody || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
-      const rows = (Array.isArray(cp.rows) ? cp.rows : []).slice(0, 50).filter((r) => r && typeof r === 'object').map((r) => {
-        const o = { host: String(cp.host || r.host || '').slice(0, 64) };
-        for (const k of ['at', 'session', 'ev', 'trigger', 'decision']) if (r[k] != null) o[k] = String(r[k]).slice(0, 80);
-        for (const k of ['ctxBefore', 'ctx', 'summaryChars', 'turn']) if (Number.isFinite(Number(r[k]))) o[k] = Number(r[k]);
-        if (typeof r.repeat === 'boolean') o.repeat = r.repeat;
-        return o;
-      });
-      if (!rows.length) return json(res, 400, { error: 'rows required' });
-      try { appendFileSync(join(BRAIN, '.compaction-log.jsonl'), rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8'); }
-      catch { return json(res, 500, { error: 'write failed' }); }
-      return json(res, 200, { ok: true, rows: rows.length });
-    }
-    // ANALYTICS from every machine, one store on this server (tools/analytics-store.mjs; The owner, 2026-11-02: every
-    // analytic is saved on the server). Kinds: usage (one row per turn of an agent of the mod) and hook-backup (each
-    // time the old command hooks ran because the mod did not handle an event). Rows carry their own id, so a retry
-    // is kept once. No conversation content. Count them with: node tools/analytics-count.mjs
-    if (path === '/analytics' && req.method === 'POST') {
-      let abody = '';
-      for await (const chunk of req) {
-        abody += chunk;
-        if (abody.length > ANALYTICS_MAX_BODY) { req.destroy(); return; }
-      }
-      let ap; try { ap = JSON.parse(abody || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
-      let r; try { r = acceptAnalytics(BRAIN, ap); } catch { return json(res, 500, { error: 'write failed' }); }
-      return json(res, r.status, r.body);
-    }
-    if (path === '/usage' && req.method === 'POST') {
-      let ubody = '';
-      for await (const chunk of req) {
-        ubody += chunk;
-        if (ubody.length > 50_000) { req.destroy(); return; }
-      }
-      let win = {};
-      try { win = JSON.parse(readFileSync(join(BRAIN, 'usage-collection.json'), 'utf8')); } catch { /* no window */ }
-      const today = new Date().toISOString().slice(0, 10);
-      if (!win.from || !win.until || today < win.from || today > win.until) return json(res, 200, { ok: true, skipped: 'closed' });
-      let up;
-      try { up = JSON.parse(ubody || '{}'); } catch { return json(res, 400, { error: 'bad json' }); }
-      const strs = (a, n, len) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string').slice(0, n).map((x) => x.slice(0, len)) : []);
-      const row = {
-        at: Number(up.at) || Date.now(), host: String(up.host || '').slice(0, 64), session: String(up.session || '').slice(0, 16),
-        prompt: String(up.prompt || '').slice(0, 4000), opened: strs(up.opened, 40, 200), queries: strs(up.queries, 10, 300),
-        offered: strs(up.offered, 40, 200), answer: String(up.answer || '').slice(0, 1500),
-      };
-      if (!row.prompt.trim() || (!row.opened.length && !row.queries.length && !row.offered.length)) return json(res, 400, { error: 'prompt and opened, queries or offered required' });
-      try { appendFileSync(join(BRAIN, '.usage-log.jsonl'), JSON.stringify(row) + '\n', 'utf8'); }
-      catch { return json(res, 500, { error: 'write failed' }); }
-      audit('USAGE ' + ip + ' host=' + row.host + ' opened=' + row.opened.length + ' queries=' + row.queries.length + ' offered=' + row.offered.length);
-      return json(res, 200, { ok: true });
-    }
 
     if (path === '/pulse' && req.method === 'POST') {
       let pbody = '';
@@ -1177,9 +1207,14 @@ const handler = async (req, res) => {
         // 1.5x is not worth silently corrupting the vectors, and the corruption is invisible: the
         // output is still 384 dims and still normalised, so nothing downstream would complain. The
         // round trips were the real cost and batching the REQUEST already removed those.
-        for (const t of texts) {
-          const o = await embedB(t.slice(0, 4000), { pooling: 'mean', normalize: true });
-          vectors.push(Array.from(o.data));
+        try {
+          for (const t of texts) {
+            const o = await embedB(t.slice(0, 4000), { pooling: 'mean', normalize: true });
+            vectors.push(Array.from(o.data));
+          }
+        } catch (e) {
+          audit('EMBED-FAIL ' + ip + ' n=' + texts.length + ' ' + (Date.now() - tb) + 'ms ' + String(e.message).slice(0, 120));
+          return json(res, 503, { error: 'embedding unavailable', detail: String(e.message).slice(0, 160) });
         }
         audit('EMBED-BATCH ' + ip + ' n=' + texts.length
           + ' chars=' + texts.reduce((a, t) => a + t.length, 0) + ' ' + (Date.now() - tb) + 'ms');
@@ -1191,7 +1226,12 @@ const handler = async (req, res) => {
       if (typeof text !== 'string' || !text.trim()) return json(res, 400, { error: 'text or texts required' });
       const t0 = Date.now();
       const embed = await getEmbedder();
-      const out = await embed(text.slice(0, 4000), { pooling: 'mean', normalize: true });
+      let out;
+      try { out = await embed(text.slice(0, 4000), { pooling: 'mean', normalize: true }); }
+      catch (e) {
+        audit('EMBED-FAIL ' + ip + ' chars=' + text.length + ' ' + (Date.now() - t0) + 'ms ' + String(e.message).slice(0, 120));
+        return json(res, 503, { error: 'embedding unavailable', detail: String(e.message).slice(0, 160) });
+      }
       // Log the CALL, never the text.
       //
       // Added 2026-08-22 so a prompt typed on another machine is visible here at all: until now

@@ -51,9 +51,130 @@ export const HOW_TO_WRITE = 'A commit message says what changed and why, and not
 // A command that commits with a message of its own: the agent hook checks it before it runs. A commit that reuses
 // the existing message has nothing new to check.
 export const COMMIT_CMD = /\bgit\b[^\n|;&]*\bcommit\b/;
-export const writesMessage = (cmd) => /\s(-m|--message|-F|--file|-am|-cm)\b/.test(cmd) || /\s-[a-zA-Z]*m\b/.test(cmd);
-export function commandProblems(cmd) {
+// Any cluster of short flags holding m or F, the message glued on or not (-am"text", -aFfile); messagesOf decides.
+export const writesMessage = (cmd) => /\s(--message|--file)\b/.test(cmd) || /\s-[a-zA-Z]*[mF]/.test(cmd);
+// Only the message is judged, not the rest of the command: a heredoc that appended a memory next to a clean -m
+// was refused on 2026-11-02 because the old check read the whole command. When the message cannot be read
+// from the command alone (a -F file not written yet, -F -, a substitution other than $(cat <<EOF)), the whole
+// command is judged as before, so nothing that was refused before slips through.
+const HEREDOC_MSG = /(-m|--message)(=|\s+)"\$\(cat\s*<<-?\s*['"]?(\w+)['"]?[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*\r?\n?\s*\)"/g;
+const ABSOLUTE = /^(?:[a-zA-Z]:[\/]|[\/])/;
+const BODY_MARK = /^\u0000HB(\d+)\u0000$/;
+
+// The words of one shell command after "commit", quotes removed; null when it holds a substitution.
+function tokensAfter(text) {
+  const out = [];
+  let cur = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'") {
+      const end = text.indexOf("'", i + 1);
+      if (end < 0) return null;
+      cur = (cur || '') + text.slice(i + 1, end); i = end; continue;
+    }
+    if (ch === '"') {
+      let j = i + 1, v = '';
+      for (; j < text.length && text[j] !== '"'; j++) {
+        if (text[j] === '\\' && j + 1 < text.length) { v += text[++j]; continue; }
+        if (text[j] === '`' || (text[j] === '$' && text[j + 1] === '(')) return null;
+        v += text[j];
+      }
+      if (j >= text.length) return null;
+      cur = (cur || '') + v; i = j; continue;
+    }
+    if (ch === '`' || (ch === '$' && text[i + 1] === '(')) return null;
+    if (ch === ';' || ch === '&' || ch === '|' || ch === '\n') break;
+    if (/\s/.test(ch)) { if (cur !== null) { out.push(cur); cur = null; } continue; }
+    cur = (cur || '') + ch;
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
+// A cluster of git commit's short flags (-am"text" is -a -m "text"): the m or F in it and what follows it in the
+// same token, the message or the file (empty: the next token). A flag that takes its own value (-C, -c, -t, and -u, -S
+// with an optional one) ends the cluster, so its value is never read as one of ours.
+function shortValue(t) {
+  for (let k = 1; k < t.length; k++) {
+    const ch = t[k];
+    if (ch === 'm' || ch === 'F') return { flag: ch, value: t.slice(k + 1) };
+    if ('CctuS'.includes(ch) || !/[a-zA-Z]/.test(ch)) return null;
+  }
+  return null;
+}
+
+// The messages one commit command writes, or null when they cannot be read from the command alone. A -F file
+// is read through opts.readFile (path as written; the caller resolves it against its own folder), because a
+// rule module imports nothing.
+function messagesOf(tokens, bodies, opts) {
+  const msgs = [];
+  const body = (t) => { const m = BODY_MARK.exec(t); return m ? bodies[Number(m[1])] : t; };
+  const fromFile = (f) => {
+    if (!f || f === '-') return null;
+    // After a cd the shell's folder is not the one we know, so a relative path could name another file.
+    if (!ABSOLUTE.test(f) && opts.movesFolder) return null;
+    if (typeof opts.readFile !== 'function') return null;
+    try { const t = opts.readFile(f); return typeof t === 'string' ? t : null; } catch { return null; }
+  };
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    let file;
+    if (t === '--message') { if (i + 1 >= tokens.length) return null; msgs.push(body(tokens[++i])); continue; }
+    if (t.startsWith('--message=')) { msgs.push(body(t.slice(10))); continue; }
+    const short = /^-[^-]/.test(t) ? shortValue(t) : null;
+    if (short && short.flag === 'm') {
+      if (short.value) { msgs.push(body(short.value)); continue; }
+      if (i + 1 >= tokens.length) return null;
+      msgs.push(body(tokens[++i])); continue;
+    }
+    if (t === '--file') file = tokens[++i];
+    else if (t.startsWith('--file=')) file = t.slice(7);
+    else if (short && short.flag === 'F') file = short.value || tokens[++i];
+    else continue;
+    const text = fromFile(file);
+    if (text === null) return null;
+    msgs.push(text);
+  }
+  return msgs;
+}
+
+export function commandProblems(cmd, opts = {}) {
   const c = String(cmd || '');
   if (!COMMIT_CMD.test(c) || !writesMessage(c)) return [];
-  return problemsIn(c);
+  const bodies = [];
+  const flat = c.replace(HEREDOC_MSG, (_m, flag, _sep, _tag, text) => {
+    bodies.push(text);
+    return flag + ' \u0000HB' + (bodies.length - 1) + '\u0000';
+  });
+  const all = [];
+  const re = new RegExp(COMMIT_CMD.source, 'g');
+  let m;
+  while ((m = re.exec(flat))) {
+    const tokens = tokensAfter(flat.slice(m.index + m[0].length));
+    const movesFolder = /(^|[\s;&|(])(cd|pushd|Set-Location|sl)\s/i.test(flat.slice(0, m.index));
+    const msgs = tokens && messagesOf(tokens, bodies, { ...opts, movesFolder });
+    if (!msgs) return problemsIn(c);
+    all.push(...msgs);
+  }
+  return all.length ? problemsIn(all.join('\n\n')) : [];
 }
+
+// brain.json's limitReserve decides which agent may spend the last 5 percent of a subscription, so a change to it
+// needs the owner's yes, carried in the commit message (HAVOK, 2026-11-02, audit finding 8). The git commit-msg hook
+// compares the staged brain.json with HEAD's, parsed, so formatting elsewhere in the file changes nothing.
+// What this is: it stops an agent's mistake and leaves a trace in git. What it is not: an agent with a shell set on
+// getting around it can still write the line or skip the hook; it is not a lock.
+// The line is reserve-approved-by-owner (generic since 0.4.89, so the shipped code names no person).
+export const RESERVE_TRAILER = 'reserve-approved-by-owner';
+const RESERVE_TRAILERS = [RESERVE_TRAILER];
+export const RESERVE_APPROVAL = new RegExp('^(?:' + RESERVE_TRAILERS.join('|') + String.raw`):[ \t]*\d{4}-\d\d-\d\d[ \t]+\S.*$`, 'm');
+export const reserveApproved = (msg) => RESERVE_APPROVAL.test(String(msg || ''));
+
+const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+const reserveOfText = (text) => { try { return JSON.stringify(sorted(JSON.parse(text).limitReserve ?? null)); } catch { return 'null'; } };
+// True when limitReserve differs between the two texts of brain.json ('' for a file that is not there).
+export const reserveChanged = (headText, stagedText) => reserveOfText(headText) !== reserveOfText(stagedText);
+
+export const RESERVE_REFUSAL = 'Commit refused: it changes limitReserve in brain.json, which decides who may use the last '
+  + '5 percent of a Claude subscription. This check stops a mistake; the change needs the owner\'s yes through HAVOK. With it, '
+  + 'add a line to the message: ' + RESERVE_TRAILER + ': <YYYY-MM-DD> <his words>.';

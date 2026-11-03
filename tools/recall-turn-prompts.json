@@ -1,0 +1,238 @@
+{
+ "_about": "30 prompts the owner typed to HAVOK (transcript 8637a502, 2026-10-23 to 2026-11-02), user prompts only, none holding a secret, a password, an amount of money or personal data. previous is the up to 3 fixture prompts before it. Used by tools/recall-turn.test.mjs to check that POST /recall/turn and hooks/pre-turn.mjs find the same memories, and to measure both.",
+ "cases": [
+  {
+   "prompt": "are we sure we ant to allow gemini to save his lesson? and why are we calling them lesons its memoris so i dk but what do you think ?",
+   "previous": []
+  },
+  {
+   "prompt": "i agree gemini should only be used for help not as main",
+   "previous": [
+    "are we sure we ant to allow gemini to save his lesson? and why are we calling them lesons its memoris so i dk but what do you think ?"
+   ]
+  },
+  {
+   "prompt": "good do it this will help us when wwe develop the dashboard of the hiratrchy and to seprate tth eview in the brby agent instead of per machien",
+   "previous": [
+    "are we sure we ant to allow gemini to save his lesson? and why are we calling them lesons its memoris so i dk but what do you think ?",
+    "i agree gemini should only be used for help not as main"
+   ]
+  },
+  {
+   "prompt": "ok so it is an issue with recall not picking up that the pro model no longer exists",
+   "previous": [
+    "are we sure we ant to allow gemini to save his lesson? and why are we calling them lesons its memoris so i dk but what do you think ?",
+    "i agree gemini should only be used for help not as main",
+    "good do it this will help us when wwe develop the dashboard of the hiratrchy and to seprate tth eview in the brby agent instead of per machien"
+   ]
+  },
+  {
+   "prompt": "sned gemini for reasearch maybe people found a betert way to work with agents",
+   "previous": [
+    "i agree gemini should only be used for help not as main",
+    "good do it this will help us when wwe develop the dashboard of the hiratrchy and to seprate tth eview in the brby agent instead of per machien",
+    "ok so it is an issue with recall not picking up that the pro model no longer exists"
+   ]
+  },
+  {
+   "prompt": "backgprund mode what is that ?",
+   "previous": [
+    "good do it this will help us when wwe develop the dashboard of the hiratrchy and to seprate tth eview in the brby agent instead of per machien",
+    "ok so it is an issue with recall not picking up that the pro model no longer exists",
+    "sned gemini for reasearch maybe people found a betert way to work with agents"
+   ]
+  },
+  {
+   "prompt": "so I thin kthat is what we use for gelpers agents I need a place to talk to them if they are background I wnat be able too",
+   "previous": [
+    "ok so it is an issue with recall not picking up that the pro model no longer exists",
+    "sned gemini for reasearch maybe people found a betert way to work with agents",
+    "backgprund mode what is that ?"
+   ]
+  },
+  {
+   "prompt": "ok so yo uare right becasue youare being evoled and updated by anthropic the hooks we ahve and reasonign need to be review maybe thae are'nt needed anymore",
+   "previous": [
+    "sned gemini for reasearch maybe people found a betert way to work with agents",
+    "backgprund mode what is that ?",
+    "so I thin kthat is what we use for gelpers agents I need a place to talk to them if they are background I wnat be able too"
+   ]
+  },
+  {
+   "prompt": "This is so much better. But the thing is, I don't understand clearly how Claude Code works. So like, is the context in Claude Code or is it at Anthropic side? Like how does it work? And this is so cool. And we can even have the proxy set up on the server so that on the server we have the high context for every agent to use, and every agent can have its own proxy in its machine with its small local context that we not all agents need, and it can write to the full context if it wants. That is so cool. Can you generate for me a diagram for demonstration of how actually Claude Code works? Like, how does the message is sent? Isn't it in Claude Code locally? I thought it read the context here locally and then sends everything to Anthropic, but I'm not understand it clearly. Give me a demonstration of how it is now and how it will be with the proxies.",
+   "previous": [
+    "backgprund mode what is that ?",
+    "so I thin kthat is what we use for gelpers agents I need a place to talk to them if they are background I wnat be able too",
+    "ok so yo uare right becasue youare being evoled and updated by anthropic the hooks we ahve and reasonign need to be review maybe thae are'nt needed anymore"
+   ]
+  },
+  {
+   "prompt": "All right, but a quick question. What if the proxy fails? Does it continue working normally?",
+   "previous": [
+    "so I thin kthat is what we use for gelpers agents I need a place to talk to them if they are background I wnat be able too",
+    "ok so yo uare right becasue youare being evoled and updated by anthropic the hooks we ahve and reasonign need to be review maybe thae are'nt needed anymore",
+    "This is so much better. But the thing is, I don't understand clearly how Claude Code works. So like, is the context in Claude Code or is it at Anthropic side? Like how does it work? And this is so cool. And we can even have the proxy set up on the server so that on the server we have the high context for every agent to use, and every agent can have its own proxy in its machine with its small local context that we not all agents need, and it can write to the full context if it wants. That is so cool. Can you generate for me a diagram for demonstration of how actually Claude Code works? Like, how does the message is sent? Isn't it in Claude Code locally? I thought it read the context here locally and then sends everything to Anthropic, but I'm not understand it clearly. Give me a demonstration of how it is now and how it will be with the proxies."
+   ]
+  },
+  {
+   "prompt": "Really important question that I thought about. How would the proxy handle, for example, safeguards from Opus 5.5 and stuff like that? Is it like adapted, or do we have to code it so that it thinks of every possibility?",
+   "previous": [
+    "ok so yo uare right becasue youare being evoled and updated by anthropic the hooks we ahve and reasonign need to be review maybe thae are'nt needed anymore",
+    "This is so much better. But the thing is, I don't understand clearly how Claude Code works. So like, is the context in Claude Code or is it at Anthropic side? Like how does it work? And this is so cool. And we can even have the proxy set up on the server so that on the server we have the high context for every agent to use, and every agent can have its own proxy in its machine with its small local context that we not all agents need, and it can write to the full context if it wants. That is so cool. Can you generate for me a diagram for demonstration of how actually Claude Code works? Like, how does the message is sent? Isn't it in Claude Code locally? I thought it read the context here locally and then sends everything to Anthropic, but I'm not understand it clearly. Give me a demonstration of how it is now and how it will be with the proxies.",
+    "All right, but a quick question. What if the proxy fails? Does it continue working normally?"
+   ]
+  },
+  {
+   "prompt": "mmmmhh mods I did'tn know you were analyseign them they could add a lot whatd oyou have in mind \n\nfor me I thing we should draw the diagram f the structer of the system on how it is gonna mbe and once we agree on it start test ign then build",
+   "previous": [
+    "This is so much better. But the thing is, I don't understand clearly how Claude Code works. So like, is the context in Claude Code or is it at Anthropic side? Like how does it work? And this is so cool. And we can even have the proxy set up on the server so that on the server we have the high context for every agent to use, and every agent can have its own proxy in its machine with its small local context that we not all agents need, and it can write to the full context if it wants. That is so cool. Can you generate for me a diagram for demonstration of how actually Claude Code works? Like, how does the message is sent? Isn't it in Claude Code locally? I thought it read the context here locally and then sends everything to Anthropic, but I'm not understand it clearly. Give me a demonstration of how it is now and how it will be with the proxies.",
+    "All right, but a quick question. What if the proxy fails? Does it continue working normally?",
+    "Really important question that I thought about. How would the proxy handle, for example, safeguards from Opus 5.5 and stuff like that? Is it like adapted, or do we have to code it so that it thinks of every possibility?"
+   ]
+  },
+  {
+   "prompt": "Change a request at any moment, even between two steps of a running task. A mod can only clean up through Claude Code's own clean-up event, so at a natural break. bit isn't this what we wanted modify the last pages hwo we want ?",
+   "previous": [
+    "All right, but a quick question. What if the proxy fails? Does it continue working normally?",
+    "Really important question that I thought about. How would the proxy handle, for example, safeguards from Opus 5.5 and stuff like that? Is it like adapted, or do we have to code it so that it thinks of every possibility?",
+    "mmmmhh mods I did'tn know you were analyseign them they could add a lot whatd oyou have in mind \n\nfor me I thing we should draw the diagram f the structer of the system on how it is gonna mbe and once we agree on it start test ign then build"
+   ]
+  },
+  {
+   "prompt": "but yuou still got to explain to me what is exactly a watchdog and its impact and if we have a lot what does happend",
+   "previous": [
+    "Really important question that I thought about. How would the proxy handle, for example, safeguards from Opus 5.5 and stuff like that? Is it like adapted, or do we have to code it so that it thinks of every possibility?",
+    "mmmmhh mods I did'tn know you were analyseign them they could add a lot whatd oyou have in mind \n\nfor me I thing we should draw the diagram f the structer of the system on how it is gonna mbe and once we agree on it start test ign then build",
+    "Change a request at any moment, even between two steps of a running task. A mod can only clean up through Claude Code's own clean-up event, so at a natural break. bit isn't this what we wanted modify the last pages hwo we want ?"
+   ]
+  },
+  {
+   "prompt": "yesah that is good , and if we cannot do it any otehr way we need  to hav ea structered watchdog system not just creating them randomly mearge some kep analytoicss etc",
+   "previous": [
+    "mmmmhh mods I did'tn know you were analyseign them they could add a lot whatd oyou have in mind \n\nfor me I thing we should draw the diagram f the structer of the system on how it is gonna mbe and once we agree on it start test ign then build",
+    "Change a request at any moment, even between two steps of a running task. A mod can only clean up through Claude Code's own clean-up event, so at a natural break. bit isn't this what we wanted modify the last pages hwo we want ?",
+    "but yuou still got to explain to me what is exactly a watchdog and its impact and if we have a lot what does happend"
+   ]
+  },
+  {
+   "prompt": "btw the repo system in the brai ndid we doit ?",
+   "previous": [
+    "Change a request at any moment, even between two steps of a running task. A mod can only clean up through Claude Code's own clean-up event, so at a natural break. bit isn't this what we wanted modify the last pages hwo we want ?",
+    "but yuou still got to explain to me what is exactly a watchdog and its impact and if we have a lot what does happend",
+    "yesah that is good , and if we cannot do it any otehr way we need  to hav ea structered watchdog system not just creating them randomly mearge some kep analytoicss etc"
+   ]
+  },
+  {
+   "prompt": "hey lets continue \n● UserPromptSubmit operation blocked by hook:\n  keep-warm: quiet 589 min, cache already gone\n\nan youy ana lize if this keep warm here cost more or lessd thatn jsur reereading the context?",
+   "previous": [
+    "but yuou still got to explain to me what is exactly a watchdog and its impact and if we have a lot what does happend",
+    "yesah that is good , and if we cannot do it any otehr way we need  to hav ea structered watchdog system not just creating them randomly mearge some kep analytoicss etc",
+    "btw the repo system in the brai ndid we doit ?"
+   ]
+  },
+  {
+   "prompt": "ok gg so give me all open I tems an lets finnish this up",
+   "previous": [
+    "yesah that is good , and if we cannot do it any otehr way we need  to hav ea structered watchdog system not just creating them randomly mearge some kep analytoicss etc",
+    "btw the repo system in the brai ndid we doit ?",
+    "hey lets continue \n● UserPromptSubmit operation blocked by hook:\n  keep-warm: quiet 589 min, cache already gone\n\nan youy ana lize if this keep warm here cost more or lessd thatn jsur reereading the context?"
+   ]
+  },
+  {
+   "prompt": "I do'nt think we should lock anything but we should find a way and learn to clean it up correclty to not loose meaning and undersatndi nbut also keep in mind somthing exemple we do a cleen nup that archives and foldes everythign, thaand the nthe agent needs everythign again, the nhe reopens them an rereads aeverythgin then agein it cleans up and continues in a loop",
+   "previous": [
+    "btw the repo system in the brai ndid we doit ?",
+    "hey lets continue \n● UserPromptSubmit operation blocked by hook:\n  keep-warm: quiet 589 min, cache already gone\n\nan youy ana lize if this keep warm here cost more or lessd thatn jsur reereading the context?",
+    "ok gg so give me all open I tems an lets finnish this up"
+   ]
+  },
+  {
+   "prompt": "I do'nt undersatand what we have now is good we just need to unlock it lear nhow to clean upt propernly test, and if it works harden and then publish and hten keep learnign so it gets bette ?",
+   "previous": [
+    "hey lets continue \n● UserPromptSubmit operation blocked by hook:\n  keep-warm: quiet 589 min, cache already gone\n\nan youy ana lize if this keep warm here cost more or lessd thatn jsur reereading the context?",
+    "ok gg so give me all open I tems an lets finnish this up",
+    "I do'nt think we should lock anything but we should find a way and learn to clean it up correclty to not loose meaning and undersatndi nbut also keep in mind somthing exemple we do a cleen nup that archives and foldes everythign, thaand the nthe agent needs everythign again, the nhe reopens them an rereads aeverythgin then agein it cleans up and continues in a loop"
+   ]
+  },
+  {
+   "prompt": "ok then lets have a mode per agent ?",
+   "previous": [
+    "ok gg so give me all open I tems an lets finnish this up",
+    "I do'nt think we should lock anything but we should find a way and learn to clean it up correclty to not loose meaning and undersatndi nbut also keep in mind somthing exemple we do a cleen nup that archives and foldes everythign, thaand the nthe agent needs everythign again, the nhe reopens them an rereads aeverythgin then agein it cleans up and continues in a loop",
+    "I do'nt undersatand what we have now is good we just need to unlock it lear nhow to clean upt propernly test, and if it works harden and then publish and hten keep learnign so it gets bette ?"
+   ]
+  },
+  {
+   "prompt": "remember cheaper and better results that is the goal",
+   "previous": [
+    "I do'nt think we should lock anything but we should find a way and learn to clean it up correclty to not loose meaning and undersatndi nbut also keep in mind somthing exemple we do a cleen nup that archives and foldes everythign, thaand the nthe agent needs everythign again, the nhe reopens them an rereads aeverythgin then agein it cleans up and continues in a loop",
+    "I do'nt undersatand what we have now is good we just need to unlock it lear nhow to clean upt propernly test, and if it works harden and then publish and hten keep learnign so it gets bette ?",
+    "ok then lets have a mode per agent ?"
+   ]
+  },
+  {
+   "prompt": "ok so mods I ssee some thigns of and somethigns I do'tn understand also I see wetill have hooks I thought mods are gonna replace hooks ? \n\nadn the new context yo uworked on yesterday what are the results how does itr work ?",
+   "previous": [
+    "I do'nt undersatand what we have now is good we just need to unlock it lear nhow to clean upt propernly test, and if it works harden and then publish and hten keep learnign so it gets bette ?",
+    "ok then lets have a mode per agent ?",
+    "remember cheaper and better results that is the goal"
+   ]
+  },
+  {
+   "prompt": "why I said the mods run and the hook is only a bakc up if the mods fail",
+   "previous": [
+    "ok then lets have a mode per agent ?",
+    "remember cheaper and better results that is the goal",
+    "ok so mods I ssee some thigns of and somethigns I do'tn understand also I see wetill have hooks I thought mods are gonna replace hooks ? \n\nadn the new context yo uworked on yesterday what are the results how does itr work ?"
+   ]
+  },
+  {
+   "prompt": "great s oit does'nt bloc kour agents anymore, anything els ?",
+   "previous": [
+    "remember cheaper and better results that is the goal",
+    "ok so mods I ssee some thigns of and somethigns I do'tn understand also I see wetill have hooks I thought mods are gonna replace hooks ? \n\nadn the new context yo uworked on yesterday what are the results how does itr work ?",
+    "why I said the mods run and the hook is only a bakc up if the mods fail"
+   ]
+  },
+  {
+   "prompt": "btw what happens if a message is sent to an gangetn that is dead or nervre comming back to life again ?",
+   "previous": [
+    "ok so mods I ssee some thigns of and somethigns I do'tn understand also I see wetill have hooks I thought mods are gonna replace hooks ? \n\nadn the new context yo uworked on yesterday what are the results how does itr work ?",
+    "why I said the mods run and the hook is only a bakc up if the mods fail",
+    "great s oit does'nt bloc kour agents anymore, anything els ?"
+   ]
+  },
+  {
+   "prompt": "ok status o nthe new pluging  ?(context mods hook etc ? ) are we done ?",
+   "previous": [
+    "why I said the mods run and the hook is only a bakc up if the mods fail",
+    "great s oit does'nt bloc kour agents anymore, anything els ?",
+    "btw what happens if a message is sent to an gangetn that is dead or nervre comming back to life again ?"
+   ]
+  },
+  {
+   "prompt": "Keep it as it is.\n\nwhat d oyou mena when an agents restarts the clean up is lost why I thout it stayed as it is teh context  ?\n\nbtw hwo does the layer context work? is is alwas pulled for mthe server is it  acopy and sycs with eh server copy etc ?",
+   "previous": [
+    "great s oit does'nt bloc kour agents anymore, anything els ?",
+    "btw what happens if a message is sent to an gangetn that is dead or nervre comming back to life again ?",
+    "ok status o nthe new pluging  ?(context mods hook etc ? ) are we done ?"
+   ]
+  },
+  {
+   "prompt": "ok cool so where are we at cna I have a status ?",
+   "previous": [
+    "btw what happens if a message is sent to an gangetn that is dead or nervre comming back to life again ?",
+    "ok status o nthe new pluging  ?(context mods hook etc ? ) are we done ?",
+    "Keep it as it is.\n\nwhat d oyou mena when an agents restarts the clean up is lost why I thout it stayed as it is teh context  ?\n\nbtw hwo does the layer context work? is is alwas pulled for mthe server is it  acopy and sycs with eh server copy etc ?"
+   ]
+  },
+  {
+   "prompt": "ok please give me status ?",
+   "previous": [
+    "ok status o nthe new pluging  ?(context mods hook etc ? ) are we done ?",
+    "Keep it as it is.\n\nwhat d oyou mena when an agents restarts the clean up is lost why I thout it stayed as it is teh context  ?\n\nbtw hwo does the layer context work? is is alwas pulled for mthe server is it  acopy and sycs with eh server copy etc ?",
+    "ok cool so where are we at cna I have a status ?"
+   ]
+  }
+ ]
+}

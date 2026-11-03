@@ -3,7 +3,7 @@
 // WHY. the locked-down client machine, 2026-09-17: the first connection to the server after the laptop sat idle took 6.9 s
 // through the Madrid DERP relay, the next ones 93 ms. The hook gave up at connect-timeout 4, marked the
 // server down, and recall stayed keyword only for the whole cooldown. One retry, inside what is left of
-// the hook's 10 second limit, catches the warm relay instead.
+// the hook's own 5 second deadline, catches the warm relay instead.
 //
 // The helper is taken from the hook's own source, so what runs here is exactly what ships. Only
 // execFileSync is replaced, with a stub that records each call.
@@ -68,7 +68,7 @@ const remote = { ct: 1, connectTo: 'host:8443:1.2.3.4:8443' };
   const { curlRemote, calls } = load(8000, [{ fields: { status: 28 } }, { out: 'x' }]);
   let threw = false;
   try { curlRemote(conf(4), 9000, { ct: 4, connectTo: remote.connectTo }); } catch { threw = true; }
-  check('no retry when the hook has no time left before its 10 s limit', [threw, calls.length], [true, 1]);
+  check('no retry when the hook has no time left before its 5 s deadline', [threw, calls.length], [true, 1]);
 }
 {
   const { curlRemote, calls } = load(3000, [{ fields: { status: 28 } }, { out: 'ok' }]);
@@ -76,7 +76,7 @@ const remote = { ct: 1, connectTo: 'host:8443:1.2.3.4:8443' };
   const second = calls[1] || { conf: '', timeout: 0 };
   const ct = Number((second.conf.match(/connect-timeout = (\d+)/) || [])[1]);
   const maxTime = Number((second.conf.match(/max-time = (\d+)/) || [])[1]);
-  check('the retry fits in what is left of the 10 s limit', ct >= 1 && ct <= 4 && maxTime <= 5 && second.timeout <= 5500, true);
+  check('the retry fits in what is left of the 5 s deadline', ct >= 1 && ct <= 4 && maxTime <= 5 && second.timeout <= 5500, true);
 }
 {
   const { curlRemote, calls } = load(500, [{ fields: { code: 'ENOENT' } }, { out: 'x' }]);

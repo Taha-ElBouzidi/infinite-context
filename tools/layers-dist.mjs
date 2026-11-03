@@ -8,8 +8,13 @@ import { join } from 'node:path';
 
 const SUBFOLDERS = ['', 'machine', 'group'];
 
-// Every layer file this brain serves: README.md and *.md directly in layers/, layers/machine/ and layers/group/.
-export function servedLayerFiles(brain) {
+// Every layer file this brain serves through /dist: none since the context release (2026-11-02). The layers moved to
+// the layer host (D:/dev/Havok/LAYERS, GET /layers/versions and GET /layers/<key>, tools/layer-host.mjs), which
+// versions each one, so a layer change no longer rides the code sync. The export stays so callers keep working; the
+// listing below is kept for allLayerFiles.
+export function servedLayerFiles() { return []; }
+
+export function allLayerFiles(brain) {
   const out = [];
   for (const sub of SUBFOLDERS) {
     const dir = sub ? join(brain, 'layers', sub) : join(brain, 'layers');
@@ -29,5 +34,5 @@ export function servedLayerFiles(brain) {
 // names layers/README.md): an older server, or a broken list, removes nothing.
 export function layerOrphans(brain, published) {
   if (!published.has('layers/README.md')) return [];
-  return servedLayerFiles(brain).filter((rel) => !published.has(rel));
+  return allLayerFiles(brain).filter((rel) => !published.has(rel));
 }

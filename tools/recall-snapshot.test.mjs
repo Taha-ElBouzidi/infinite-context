@@ -23,7 +23,12 @@ wt.Worker = class extends RealWorker {
     super(hang ? 'setInterval(() => {}, 1000);' : file, hang ? { eval: true } : opts);
     live += 1;
     peak = Math.max(peak, live);
-    this.once('exit', () => { live -= 1; });
+    // A build ends at its answer, which is when recall-core may start the next one; the thread exits a moment
+    // later. Counting until exit made a small brain (a fresh install, builds of a few milliseconds) report two at once.
+    let done = false;
+    const end = () => { if (!done) { done = true; live -= 1; } };
+    this.once('message', end);
+    this.once('exit', end);
   }
 };
 syncBuiltinESMExports();

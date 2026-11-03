@@ -1,4 +1,4 @@
-// Keeps the last 3 percent of the Claude plan for the main assistant (The owner, 2026-10-02). The rules and why each
+// Keeps the last 5 percent of the Claude plan for the main assistant (The owner, 2026-10-02). The rules and why each
 // exists are in limit-rules.mjs, shared with the mod (which runs them first; this hook is its backup through
 // dispatch.mjs). Plain code, no tokens: below the bar it exits silently, and a blocked prompt never reaches the model.
 //
@@ -7,12 +7,14 @@
 // no limit fields); it writes them to ~/.claude/havok-limits.json. the owner chose local over a shared server copy:
 // a machine back from idle may run one prompt past the bar, until its first reply brings the real number.
 //
-// Exempt: the main assistant, whose session id ~/.claude/havok-main-session.txt holds (written by
-// the launcher of the main session). Bypass: the owner starts a prompt with "urgent", which opens this session for 2 hours.
-import { readFileSync, writeFileSync, mkdirSync, appendFileSync, openSync, readSync, fstatSync, closeSync } from 'node:fs';
-import { join } from 'node:path';
+// Exempt: the agent brain.json names for this machine's Claude subscription (limitReserve.accounts), matched on
+// HAVOK_MOD_AGENT (set by the launcher; not when only inherited by a session started from its tool shell), and the session ~/.claude/havok-main-session.txt holds. Bypass: the owner starts a prompt with "urgent", which opens this session for 2 hours.
+import { readFileSync, writeFileSync, mkdirSync, appendFileSync, openSync, readSync, fstatSync, closeSync, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import { BYPASS_MS, hitsOf, typedUrgent, isPing, typedRow, urgentStillOpen, blockMessage, TOOL_STOP, PING_BLOCKED, blockKind, blockRow, bypassName } from './limit-rules.mjs';
+import { BYPASS_MS, reserveOf, accountOf, agentExempt, claudeFiles, hitsOf, typedUrgent, isPing, typedRow, urgentStillOpen, blockMessage, TOOL_STOP, PING_BLOCKED, blockKind, blockRow, bypassName, BYPASS_OUTBOX, BYPASS_REASON, bypassUseRow, BYPASS_MARKER, bypassMarkerAfter } from './limit-rules.mjs';
 
 const HOME = join(homedir(), '.claude');
 const BYPASS_DIR = join(HOME, 'havok-limit-bypass');
@@ -23,7 +25,10 @@ const session = String(data.session_id || '');
 const parse = (s) => { try { return JSON.parse(s); } catch { return null; } };
 const read = (f) => { try { return readFileSync(f, 'utf8').trim(); } catch { return ''; } };
 
-const { five, week, hits } = hitsOf(parse(read(join(HOME, 'havok-limits.json'))), Date.now());
+const files = claudeFiles(homedir(), process.env.CLAUDE_CONFIG_DIR);
+const reserve = reserveOf(parse(read(join(dirname(dirname(fileURLToPath(import.meta.url))), 'brain.json'))), accountOf(parse(read(files.claudeJson))));
+if (!reserve.enabled) process.exit(0);
+const { five, week, hits } = hitsOf(parse(read(files.limits)), Date.now());
 
 const typed = typedUrgent(data);
 const bypassFile = join(BYPASS_DIR, bypassName(session));
@@ -43,10 +48,19 @@ if (isPing(data)) {
   process.exit(0);
 }
 
-if (session && read(join(HOME, 'havok-main-session.txt')) === session) process.exit(0);
+// Lets the session through a bypass file.
+const through = (file, reason) => {
+  try {
+  } catch { /* bookkeeping only */ }
+  process.exit(0);
+};
+const bypassFileName = 'havok-limit-bypass/' + bypassName(session);
 
-if (typed) process.exit(0);
-if (Number(read(bypassFile)) > Date.now()) process.exit(0);
+if (session && read(join(HOME, 'havok-main-session.txt')) === session) through('havok-main-session.txt', BYPASS_REASON.main);
+if (agentExempt(process.env, reserve)) process.exit(0);
+
+if (typed) through(bypassFileName, BYPASS_REASON.urgent);
+if (Number(read(bypassFile)) > Date.now()) through(bypassFileName, BYPASS_REASON.urgent);
 
 // The prompt-time run can miss "urgent" (seen 2026-10-28 on one machine: the hook timed out or got no
 // prompt, so no bypass file and every tool stayed blocked). So a tool call also reads the owner's last typed message and
@@ -73,10 +87,10 @@ function lastTypedPrompt(path) {
 }
 if (data.hook_event_name === 'PreToolUse' && data.transcript_path) {
   const last = lastTypedPrompt(data.transcript_path);
-  if (urgentStillOpen(last, Date.now())) { openBypass(last.at + BYPASS_MS); process.exit(0); }
+  if (urgentStillOpen(last, Date.now())) { openBypass(last.at + BYPASS_MS); through(bypassFileName, BYPASS_REASON.urgent); }
 }
 
-const msg = blockMessage(hits);
+const msg = blockMessage(hits, reserve.mainAgent);
 logBlock(blockKind(data.hook_event_name, data.tool_name));
 if (data.hook_event_name === 'UserPromptSubmit') {
   process.stdout.write(JSON.stringify({ decision: 'block', reason: msg }));

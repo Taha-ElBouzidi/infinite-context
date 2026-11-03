@@ -16,7 +16,7 @@ function client({ withRepoTool, brainJson }, ...args) {
   const root = mkdtempSync(join(tmpdir(), 'client-help-'));
   try {
     mkdirSync(join(root, 'tools'));
-    for (const m of ['brain-client.mjs', 'provenance.mjs']) copyFileSync(join(HERE, m), join(root, 'tools', m));
+    for (const m of ['brain-client.mjs', 'provenance.mjs', 'brain-recover.mjs']) copyFileSync(join(HERE, m), join(root, 'tools', m));
     if (withRepoTool) writeFileSync(join(root, 'tools', 'repo.mjs'), 'console.log("repo tool ran: " + process.argv.slice(2).join(" "));\n');
     if (brainJson) writeFileSync(join(root, 'brain.json'), JSON.stringify(brainJson));
     const env = { ...process.env, HAVOK_SERVER_URL: 'https://127.0.0.1:9', HAVOK_SERVER_TOKEN: 'none' };
